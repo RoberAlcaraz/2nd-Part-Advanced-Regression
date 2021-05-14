@@ -1,0 +1,60 @@
+---
+title: '**First Part: COVID-19 in Spain**'
+subtitle: '**Advanced Regression And Prediction**'
+author: '*Roberto Jesús Alcaraz Molina*'
+date: "09/05/2021"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    number_section: true
+    highlight: tango
+    fig_caption: yes
+    toc: true
+    # toc_depth: 4
+header-includes: 
+- \usepackage{float}
+- \usepackage{amsbsy}
+- \usepackage{amsmath}
+- \usepackage{graphicx}
+- \usepackage{subfig}
+- \usepackage{booktabs}
+bibliography: references.bib
+---
+
+```{=tex}
+\begin{center}
+\includegraphics[width=3in]{logouc3m}
+\end{center}
+```
+\newpage
+
+```{r include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, 
+                      echo = F, 
+                      message = FALSE,
+                      eval = T,
+                      fig.pos="H", 
+                      fig.align="center",
+                      fig.width=11,
+                      cache=FALSE, error = TRUE)
+```
+
+```{r, echo = F}
+# Model packages
+pacman::p_load(ranger, mixOmics, plsmod)
+
+# Packages
+# devtools::install_github("stevenpawley/recipeselectors")
+pacman::p_load(COVID19, tidymodels, rsample, recipes, parsnip, 
+               yardstick, workflows, tune, patchwork, lubridate, recipeselectors,
+               doParallel, tidyquant, finetune, ggpubr, MASS)
+library(tidyverse, attach.required = T)
+# For ggplot
+theme_set(theme_tq())
+
+# spain <- covid19(country = "spain", start = "2020-01-22", end = "2021-04-11")
+# spain_new_data <- covid19(country = "spain", start = "2021-04-11", end = "2021-05-02")
+
+# saveRDS(spain, "00_data/spain.RDS")
+# saveRDS(spain_new_data, "00_data/spain_new_data.RDS")
+```
