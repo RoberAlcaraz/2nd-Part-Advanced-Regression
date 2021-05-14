@@ -41,20 +41,37 @@ knitr::opts_chunk$set(warning = FALSE,
 
 ```{r, echo = F}
 # Model packages
-pacman::p_load(ranger, mixOmics, plsmod)
+pacman::p_load(ranger)
 
 # Packages
 # devtools::install_github("stevenpawley/recipeselectors")
 pacman::p_load(COVID19, tidymodels, rsample, recipes, parsnip, 
                yardstick, workflows, tune, patchwork, lubridate, recipeselectors,
-               doParallel, tidyquant, finetune, ggpubr, MASS)
+               doParallel, tidyquant, finetune, ggpubr, MASS, modeltime, timetk)
 library(tidyverse, attach.required = T)
 # For ggplot
 theme_set(theme_tq())
-
-# spain <- covid19(country = "spain", start = "2020-01-22", end = "2021-04-11")
-# spain_new_data <- covid19(country = "spain", start = "2021-04-11", end = "2021-05-02")
-
-# saveRDS(spain, "00_data/spain.RDS")
-# saveRDS(spain_new_data, "00_data/spain_new_data.RDS")
 ```
+
+```{r}
+m750 <- m4_monthly %>% filter(id == "M750")
+m750 %>%
+  plot_time_series(date, value)
+spain %>%
+  plot_time_series(.date_var = date, deaths_week)
+```
+
+
+# INTRODUCTION
+
+
+# MACHINE LEARNING
+
+
+# STACKING ENSEMBLE
+
+
+# REFERENCES
+
+
+
