@@ -51,12 +51,12 @@ pacman::p_load(COVID19, tidymodels, rsample, recipes, parsnip,
 library(tidyverse, attach.required = T)
 # For ggplot
 theme_set(theme_tq())
+
+spain <- readRDS("../00_data/spain.RDS")
+# spain_new_data <- covid19(country = "spain", start = "2021-04-11", end = "2021-05-02")
 ```
 
 ```{r}
-m750 <- m4_monthly %>% filter(id == "M750")
-m750 %>%
-  plot_time_series(date, value)
 spain %>%
   plot_time_series(.date_var = date, deaths_week)
 ```

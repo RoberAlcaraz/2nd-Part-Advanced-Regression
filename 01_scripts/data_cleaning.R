@@ -117,3 +117,5 @@ spain <- spain %>%
     lag_3_confirmed_week = lag(confirmed_week, n = 3)
   ) %>%
   drop_na()
+
+# saveRDS(spain, "../2nd-Part-Advanced-Regression/00_data/spain.RDS")
