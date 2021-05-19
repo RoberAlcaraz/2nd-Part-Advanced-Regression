@@ -58,7 +58,66 @@ spain <- readRDS("../00_data/spain.RDS")
 
 ```{r}
 spain %>%
-  plot_time_series(.date_var = date, deaths_week)
+  plot_time_series(.date_var = date, deaths_week, .smooth = F)
+```
+
+```{r}
+rfe_model <- rand_forest() %>%
+  set_engine("ranger", importance = "permutation") %>%
+  set_mode("regression")
+
+# Predictive model for the deaths
+set.seed(1234)
+select_rec_deaths <- 
+  recipe(deaths_week ~ ., data = spain) %>%
+  step_rm(date) %>%
+  step_select_vip(all_predictors(), outcome = "deaths_week", model = rfe_model, threshold = 0.2)
+
+spain_deaths <- select_rec_deaths %>% prep() %>% juice()
+spain_deaths <- spain_deaths %>%
+  mutate(date = spain$date)
+
+# Predictive model for the confirmed cases
+select_rec_confirmed <- 
+  recipe(confirmed_week ~ ., data = spain) %>%
+  step_rm(date) %>%
+  step_select_vip(all_predictors(), outcome = "confirmed_week", model = rfe_model, threshold = 0.2)
+
+
+spain_confirmed <- select_rec_confirmed %>% prep() %>% juice()
+spain_confirmed <- spain_confirmed%>%
+  mutate(date = spain$date)
+```
+
+
+
+```{r}
+set.seed(123)
+spain_rolling_deaths <- rolling_origin(
+  spain_deaths, 
+  initial = 36, # number of weeks used to train in each resample
+  assess = 3, # number of weeks used to validate in each resample
+  cumulative = F,
+  skip = 4
+  )
+
+spain_rolling_confirmed <- rolling_origin(
+  spain_confirmed, 
+  initial = 36, # number of weeks used to train in each resample
+  assess = 3, # number of weeks used to validate in each resample
+  cumulative = F,
+  skip = 4
+  )
+```
+
+```{r}
+basic_rec_deaths <- 
+  recipe(deaths_week ~ ., data = spain_deaths) %>%
+  step_rm(date)
+
+basic_rec_confirmed <- 
+  recipe(confirmed_week ~ ., data = spain_confirmed) %>%
+  step_rm(date)
 ```
 
 
@@ -66,6 +125,202 @@ spain %>%
 
 
 # MACHINE LEARNING
+
+```{r}
+grid_ctrl <- control_grid(save_pred = T, save_workflow = T)
+# KNN
+kknn_model <- 
+  nearest_neighbor(neighbors = tune(), weight_func = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("kknn") 
+
+# SVM
+svm_poly_model <-
+  svm_poly(cost = tune(), degree = tune(), scale_factor = tune(), margin = tune()) %>%
+  set_engine('kernlab') %>%
+  set_mode('regression')
+
+svm_rbf_model <-
+  svm_rbf(cost = tune(), rbf_sigma = tune(), margin = tune()) %>%
+  set_engine('kernlab') %>%
+  set_mode('regression')
+
+# Decision tree
+dec_tree_model <-
+  decision_tree(tree_depth = tune(), min_n = tune(), cost_complexity = tune()) %>%
+  set_engine('rpart') %>%
+  set_mode('regression')
+
+# RF
+ranger_model <- 
+  rand_forest(mtry = tune(), min_n = tune(), trees = 1000) %>% 
+  set_mode("regression") %>% 
+  set_engine("ranger") 
+```
+
+
+## KNN
+
+```{r}
+# Deaths
+kknn_deaths_recipe <- 
+  basic_rec_deaths %>% 
+  step_novel(all_nominal(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_predictors(), -all_nominal()) 
+
+kknn_deaths_recipe %>% prep() %>% juice
+kknn_deaths_wflow <- 
+  workflow() %>% 
+  add_recipe(kknn_deaths_recipe) %>% 
+  add_model(kknn_model) 
+
+# Confirmed
+kknn_confirmed_recipe <- 
+  basic_rec_confirmed %>% 
+  step_novel(all_nominal(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_predictors(), -all_nominal()) 
+
+kknn_confirmed_wflow <- 
+  workflow() %>% 
+  add_recipe(kknn_confirmed_recipe) %>% 
+  add_model(kknn_model)
+```
+
+
+## SVR
+
+```{r}
+svm_deaths_rec <-
+  basic_rec_deaths %>%
+  step_nzv(all_numeric_predictors(), freq_cut = 65/5) %>% # remove the zero variance variables 
+  step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
+  step_normalize(all_numeric_predictors()) %>% # center and scale
+  step_dummy(all_nominal_predictors()) # get dummy variables
+```
+
+
+## Regression Trees and Random Forest
+
+```{r}
+# Deaths
+dec_tree_deaths_rec <- 
+  basic_rec_deaths
+
+dec_tree_deaths_wflow <- 
+  workflow() %>% 
+  add_recipe(dec_tree_deaths_rec) %>% 
+  add_model(dec_tree_model) 
+
+set.seed(57870)
+dec_tree_deaths_tune <-
+  tune_grid(
+    dec_tree_deaths_wflow, 
+    resamples = stop("add your rsample object"), 
+    grid = stop("add number of candidate points"),
+    control = 
+      )
+
+# Confirmed
+dec_tree_confirmed_rec <- 
+  basic_rec_confirmed
+
+dec_tree_confirmed_wflow <- 
+  workflow() %>% 
+  add_recipe(dec_tree_confirmed_rec) %>% 
+  add_model(dec_tree_model) 
+
+set.seed(57870)
+dec_tree_confirmed_tune <-
+  tune_grid(
+    dec_tree_confirmed_wflow, 
+    resamples = stop("add your rsample object"), 
+    grid = stop("add number of candidate points"),
+    control = 
+      )
+```
+
+
+```{r}
+# Deaths
+ranger_deaths_rec <- 
+  basic_rec_deaths
+
+ranger_deaths_wflow <- 
+  workflow() %>% 
+  add_recipe(ranger_deaths_rec) %>% 
+  add_model(ranger_model) 
+
+set.seed(57870)
+ranger_deaths_tune <-
+  tune_grid(
+    ranger_deaths_wflow, 
+    resamples = stop("add your rsample object"), 
+    grid = stop("add number of candidate points"),
+    control = 
+      )
+
+# Confirmed
+ranger_confirmed_rec <- 
+  basic_rec_confirmed
+
+ranger_confirmed_wflow <- 
+  workflow() %>% 
+  add_recipe(ranger_confirmed_rec) %>% 
+  add_model(ranger_model) 
+
+set.seed(57870)
+ranger_confirmed_tune <-
+  tune_grid(
+    ranger_confirmed_wflow, 
+    resamples = stop("add your rsample object"), 
+    grid = stop("add number of candidate points"),
+    control = 
+      )
+```
+
+
+## NN
+
+```{r}
+# Deaths
+
+
+# Confirmed
+
+```
+
+```{r}
+set.seed(51663)
+
+cl <- makePSOCKcluster(8)
+registerDoParallel(cl)
+
+knn_deaths_grid <- grid_random(parameters(kknn_model), size = 5)
+kknn_deaths_tune <-
+  tune_grid(
+    kknn_deaths_wflow, 
+    resamples = spain_rolling_deaths, 
+    grid = knn_deaths_grid,
+    control = grid_ctrl
+      )
+
+kknn_confirmed_tune <-
+  tune_grid(
+    kknn_workflow, 
+    resamples = stop("add your rsample object"), 
+    grid = stop("add number of candidate points"),
+    control = 
+      )
+
+
+
+stopCluster(cl)
+```
+
 
 
 # STACKING ENSEMBLE
