@@ -1,6 +1,7 @@
 # DATA CLEANING ----------------------------------------------------------------
 
 spain <- covid19(country = "spain", start = "2020-01-22", end = "2021-05-02")
+spain_new_data <- covid19(country = "spain", start = "2021-05-03", end = "2021-05-16")
 
 # Selecting variables
 spain <- spain %>%
@@ -9,7 +10,19 @@ spain <- spain %>%
                 internal_movement_restrictions)
 spain <- spain[, -1]
 
+spain <- spain %>%
+  dplyr::select(date, deaths, confirmed, vaccines, hosp, icu, stay_home_restrictions,
+                school_closing, workplace_closing, transport_closing, gatherings_restrictions,
+                internal_movement_restrictions)
+spain <- spain[, -1]
+
 # Dealing with missing values
+spain <- spain %>%
+  mutate(
+    deaths = replace(deaths, is.na(deaths), 0),
+    confirmed = replace(confirmed, is.na(confirmed), 0)
+  )
+spain$vaccines[1:348] <- 0
 spain <- spain %>%
   mutate(
     deaths = replace(deaths, is.na(deaths), 0),
@@ -46,10 +59,41 @@ spain <- spain %>%
                                             labels = c("no", "recommended", "mandatory")),
   ) %>%
   dplyr::select(-stay_home_restrictions)
+spain <- spain %>%
+  mutate(
+    stay_home = factor(stay_home_restrictions, 
+                       levels = c(0, 1, 2),
+                       labels = c("no", "recommended", "mandatory")),
+    
+    school_closing = factor(school_closing, 
+                            levels = c(0, 1, 2, 3),
+                            labels = c("no", "recommended", "require", "mandatory")),
+    
+    workplace_closing = factor(workplace_closing, 
+                               levels = c(0, 1, 2, 3),
+                               labels = c("no", "recommended", "require", "mandatory")),
+    
+    transport_closing = factor(transport_closing, 
+                               levels = c(0, 1),
+                               labels = c("no", "recommended")),
+    
+    gatherings_restrictions = factor(gatherings_restrictions, 
+                                     levels = c(0, 1, 2, 3, 4),
+                                     labels = c("no", "no", "no", "10-100", "<10")),
+    
+    internal_movement_restrictions = factor(internal_movement_restrictions, 
+                                            levels = c(0, 1, 2),
+                                            labels = c("no", "recommended", "mandatory")),
+  ) %>%
+  dplyr::select(-stay_home_restrictions)
 
 
 # For all days that has a lower value than their previous day, we will assign the
 # value of their previous day to that day.
+for (i in 1:(nrow(spain)-1)){
+  if (spain$deaths[i+1] < spain$deaths[i]) spain$deaths[i+1] <- spain$deaths[i]
+  if (spain$confirmed[i+1] < spain$confirmed[i]) spain$confirmed[i+1] <- spain$confirmed[i]
+}
 for (i in 1:(nrow(spain)-1)){
   if (spain$deaths[i+1] < spain$deaths[i]) spain$deaths[i+1] <- spain$deaths[i]
   if (spain$confirmed[i+1] < spain$confirmed[i]) spain$confirmed[i+1] <- spain$confirmed[i]
@@ -59,8 +103,15 @@ for (i in 1:(nrow(spain)-1)){
 for (i in 1:nrow(spain)-1){
   if (is.na(spain$vaccines[i+1])) spain$vaccines[i+1] <- spain$vaccines[i]
 }
-
 spain <- spain %>%
+  dplyr::select(-hosp, -icu)
+
+spain_new_data$vaccines[1] <- # we take the data from the previous day
+for (i in 1:nrow(spain_new_data)-1){
+  if (is.na(spain_new_data$vaccines[i+1])) spain_new_data$vaccines[i+1] <- spain_new_data$vaccines[i]
+}
+
+spain_new_data <- spain_new_data %>%
   dplyr::select(-hosp, -icu)
 
 spain_new_data$vaccines[1] <- 10784997 # we take the data from the previous day
