@@ -434,6 +434,9 @@ workflow_results_deaths <- workflow_tune_deaths %>%
 # v 6 of 6 tuning:     mlp_deaths_wf_6 (1m 8s)
 
 stopCluster(cl)
+
+# saveRDS(workflow_results_deaths, "../02_results/workflow_results_deaths.RDS")
+workflow_results_deaths <- readRDS("../02_results/workflow_results_deaths.RDS")
 ```
 
 ```{r}
@@ -464,28 +467,8 @@ workflow_results_deaths %>%
 ```
 
 ```{r}
-kknn_deaths_res <- workflow_results_deaths %>%
-   pull_workflow_set_result("kknn_deaths_wf_1")
-svm_poly_deaths_res <- workflow_results_deaths %>%
-   pull_workflow_set_result("svm_poly_deaths_wf_2")
-svm_rbf_deaths_res <- workflow_results_deaths %>%
-   pull_workflow_set_result("svm_rbf_deaths_wf_3")
-dec_tree_deaths_res <- workflow_results_deaths %>%
-   pull_workflow_set_result("dec_tree_deaths_wf_4")
-ranger_deaths_res <- workflow_results_deaths %>%
-   pull_workflow_set_result("ranger_deaths_wf_5")
-mlp_deaths_res <- workflow_results_deaths %>%
-   pull_workflow_set_result("mlp_deaths_wf_6")
-```
-
-```{r}
 deaths_stack_data <- stacks() %>%
-  add_candidates(kknn_deaths_res) %>%
-  add_candidates(svm_poly_deaths_res) %>%
-  add_candidates(svm_rbf_deaths_res) %>%
-  add_candidates(dec_tree_deaths_res) %>%
-  add_candidates(ranger_deaths_res) %>%
-  add_candidates(mlp_deaths_res)
+  add_candidates(workflow_results_deaths)
 
 as_tibble(deaths_stack_data)
 ```
@@ -510,14 +493,23 @@ cl <- makePSOCKcluster(8)
 registerDoParallel(cl)
 
 deaths_stack_model_fit <-
-  deaths_stack_model %>%
+  deaths_stack_data %>%
+  blend_predictions() %>%
   fit_members()
 
 stopCluster(cl)
 ```
 
 ```{r}
-summary(spain)
+spain_deaths %>%
+bind_cols(predict(deaths_stack_model_fit, .)) %>%
+dplyr::select(deaths_week, .pred) %>%
+rmse(truth = deaths_week, estimate = .pred)
+
+spain_deaths %>%
+bind_cols(predict(deaths_stack_model_fit, .)) %>%
+dplyr::select(deaths_week, .pred) %>%
+rsq(truth = deaths_week, estimate = .pred)
 ```
 
 
