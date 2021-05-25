@@ -48,19 +48,106 @@ pacman::p_load(ranger)
 pacman::p_load(COVID19, tidymodels, rsample, recipes, parsnip, 
                yardstick, workflows, tune, patchwork, lubridate, recipeselectors,
                doParallel, tidyquant, finetune, ggpubr, MASS, modeltime, timetk,
-               stacks)
+               stacks, GGally)
 library(tidyverse, attach.required = T)
 # For ggplot
 theme_set(theme_tq())
 
 spain <- readRDS("../00_data/spain.RDS")
+spain_new_data <- readRDS("../00_data/spain_new_data.RDS")
 # spain_new_data <- covid19(country = "spain", start = "2021-04-11", end = "2021-05-02")
 ```
 
+
+
+
+# INTRODUCTION
+
+This project is the second and final project of the *Advanced Regression and Prediction* course. As we did in the first part, we are going to analyze and try predict the 
+behavior of the coronavirus crisis in Spain, but this time, we are going to use
+**machine learning** tools.
+
+Even though for the first part of the project we took all days from 22nd of January 2020 until the 11th of March 2021, we will consider also all new observations until the
+2nd of May, since the more data, the better will be our analysis.
+
+This project will be divided in four parts: firstly, we are going to review the
+data cleaning and preprocessing steps we did in the previous part and comment about
+the results we had; then we will start the machine learning process, where we will
+explain, tune and apply 6 differents machine learning models (K-Nearest Neighbors (KNN),
+Support Vector Regression (SVR), Regression Trees, Random Forests, XGBoost and Neural
+Network (NN)); after that, we will select the best model in addition to creating
+an ensemble model with the best set of models; and finally we will give our conclusions.
+
+To put us in context, we can remember the preprocessing we did to our data:
+
+- First of all, we selected the target variables of our study, which are the deaths
+and confirmed cases, and some other variables that could be interesting for our model.
+
+- Secondly, we realized that we had some missing values in our two variables of 
+interest, but they were easy to impute since they indicated that there were no cases.
+
+- After that, we recategorized some of our factor variables because they were encoded
+as integer, as well as removing and modifiying some levels that were not entirely true 
+in Spain.
+
+- Next, we fixed some errors that were related with the data collection, for instance, 
+there were some days that had lower confirmed cases or deaths than the day before.
+
+- Then, we aggregated the data to have **weekly data** in order to decrease the noise
+that appear due to different human errors. For the numeric variables, we added all 
+values, and for the categorical features, we took the mode, i.e., the most frequent
+value in every week. Below, we can observe how our main variables of interest look like:
+
 ```{r}
-spain %>%
-  plot_time_series(.date_var = date, deaths_week, .smooth = F)
+p1 <- spain %>%
+  plot_time_series(.date_var = date, 
+                   deaths_week, 
+                   .smooth = F, 
+                   .interactive = F, .line_size = 1,
+                   .title = "Weekly deaths")
+
+p2 <- spain %>%
+  plot_time_series(.date_var = date, 
+                   confirmed_week, 
+                   .smooth = F, 
+                   .interactive = F, .line_size = 1,
+                   .title = "Weekly confirmed cases")
+
+ggarrange(p1, p2) + ggtitle("COVID-19 in Spain")
 ```
+
+- Finally, we did some feature engineering, adding four new variables that took into 
+account the time (month and year), and past cases (deaths and confirmed cases 3 weeks).
+Therefore, the variables we finally considered for our model can be seen below:
+
+| **Variable**                     | **Description**                                          |
+|:---------------------------------|----------------------------------------------------------|
+| `date`                           | Observation date (identifier).                           |
+| `deaths_week`                    | Number of deaths per week.                               |
+| `lag_3_deaths_week`              | Number of deaths per week three weeks ago.               |
+| `confirmed_week`                 | Number of confirmed cases per week.                      |
+| `lag_3_confirmed_week`           | Number of confirmed cases per week three weeks ago.      |
+| `vaccines_week`                  | Number of doses administered (single dose) per week.     |
+| `month`                          | Observation month .                                      |
+| `year`                           | Observation year.                                        |
+| `stay_home`                      | Indicates the measures of staying at home.               |
+| `school_closing`                 | Indicates the measures in education.                     |
+| `workplace_closing`              | Indicates the measures of the workplace.                 |
+| `gatherings_restrictions`        | Indicates the measures of gatherings.                    |
+| `internal_movement_restrictions` | Indicates the measures of the movements between regions. |
+
+
+
+After all these steps, we are in position to start with the machine learning process.
+
+
+# MACHINE LEARNING
+
+First of all, since we have new data, we have to repeat the recursive feature
+selection to select the most important features by means of a Random Forest. For the 
+data set that will be used for deaths models, it removes the variables `stay_home` 
+and `gathering_restrictions`, nonetheless, for the confirmed cases, it removes 
+`workplace_closing` and again `gathering_restrictions`.
 
 ```{r}
 rfe_model <- rand_forest() %>%
@@ -91,7 +178,14 @@ spain_confirmed <- spain_confirmed%>%
 ```
 
 
+Next, we need to divide our training data into folds to tune the model parameters 
+and to compare them. To do that, we will use again the function called `rolling_origin` 
+from the `rsample` package (from `tidymodels`), but now there will be 36 weeks to train
+in each fold, since as we saw in the previous part, 12 weeks were too little. Moreover,
+the number of folds will increase up to 25 folds, so the parameters will be tuned in
+a more efficient way.
 
+After all these explanations, let's start with the first model: **K-Nearest Neighbors**.
 
 ```{r}
 set.seed(123)
@@ -100,7 +194,7 @@ spain_rolling_deaths <- rolling_origin(
   initial = 36, # number of weeks used to train in each resample
   assess = 3, # number of weeks used to validate in each resample
   cumulative = F,
-  skip = 4
+  skip = 0
   )
 
 spain_rolling_confirmed <- rolling_origin(
@@ -108,11 +202,13 @@ spain_rolling_confirmed <- rolling_origin(
   initial = 36, # number of weeks used to train in each resample
   assess = 3, # number of weeks used to validate in each resample
   cumulative = F,
-  skip = 4
+  skip = 0
   )
 ```
 
 ```{r}
+grid_ctrl <- control_grid(save_pred = T, save_workflow = T)
+
 basic_rec_deaths <- 
   recipe(deaths_week ~ ., data = spain_deaths) %>%
   step_rm(date)
@@ -123,50 +219,6 @@ basic_rec_confirmed <-
 ```
 
 
-# INTRODUCTION
-
-
-# MACHINE LEARNING
-
-```{r}
-grid_ctrl <- control_grid(save_pred = T, save_workflow = T)
-
-# KNN
-kknn_model <- 
-  nearest_neighbor(neighbors = tune(), weight_func = tune()) %>% 
-  set_mode("regression") %>% 
-  set_engine("kknn") 
-
-# SVM
-svm_poly_model <-
-  svm_poly(cost = tune(), degree = tune(), scale_factor = tune(), margin = tune()) %>%
-  set_engine('kernlab') %>%
-  set_mode('regression')
-
-svm_rbf_model <-
-  svm_rbf(cost = tune(), rbf_sigma = tune(), margin = tune()) %>%
-  set_engine('kernlab') %>%
-  set_mode('regression')
-
-# Decision tree
-dec_tree_model <-
-  decision_tree(tree_depth = tune(), min_n = tune(), cost_complexity = tune()) %>%
-  set_engine('rpart') %>%
-  set_mode('regression')
-
-# RF
-ranger_model <- 
-  rand_forest(mtry = tune(), min_n = tune(), trees = tune()) %>% 
-  set_mode("regression") %>% 
-  set_engine("ranger") 
-
-# NN
-mlp_model <-
-  mlp(hidden_units = tune(), penalty = tune(), epochs = tune()) %>%
-  set_engine('nnet') %>%
-  set_mode('regression')
-```
-
 
 ## KNN
 
@@ -176,16 +228,22 @@ kknn_deaths_rec <-
   basic_rec_deaths %>%
   step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
   step_dummy(all_nominal(), -all_outcomes()) %>% 
-  step_zv(all_predictors()) %>% 
-  step_normalize(all_predictors(), -all_nominal())
+  step_normalize(all_predictors(), -all_nominal()) %>%
+  step_zv(all_predictors()) 
 
 # Confirmed
 kknn_confirmed_rec <- 
   basic_rec_confirmed %>% 
   step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
   step_dummy(all_nominal(), -all_outcomes()) %>% 
-  step_zv(all_predictors()) %>% 
-  step_normalize(all_predictors(), -all_nominal())
+  step_normalize(all_predictors(), -all_nominal()) %>%
+  step_zv(all_predictors()) 
+
+# KNN
+kknn_model <- 
+  nearest_neighbor(neighbors = tune(), weight_func = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("kknn") 
 ```
 
 
@@ -197,16 +255,27 @@ svm_deaths_rec <-
   basic_rec_deaths %>% 
   step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
   step_dummy(all_nominal(), -all_outcomes()) %>% 
-  step_zv(all_predictors()) %>% 
-  step_normalize(all_predictors(), -all_nominal()) 
+  step_normalize(all_predictors(), -all_nominal()) %>%
+  step_zv(all_predictors()) 
 
 # Confirmed
 svm_confirmed_rec <-
   basic_rec_confirmed %>% 
   step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
   step_dummy(all_nominal(), -all_outcomes()) %>% 
-  step_zv(all_predictors()) %>% 
-  step_normalize(all_predictors(), -all_nominal()) 
+  step_normalize(all_predictors(), -all_nominal()) %>%
+  step_zv(all_predictors()) 
+
+# SVM
+svm_poly_model <-
+  svm_poly(cost = tune(), degree = tune(), scale_factor = tune(), margin = tune()) %>%
+  set_engine('kernlab') %>%
+  set_mode('regression')
+
+svm_rbf_model <-
+  svm_rbf(cost = tune(), rbf_sigma = tune(), margin = tune()) %>%
+  set_engine('kernlab') %>%
+  set_mode('regression')
 ```
 
 
@@ -220,6 +289,12 @@ dec_tree_deaths_rec <-
 # Confirmed
 dec_tree_confirmed_rec <- 
   basic_rec_confirmed
+
+# Decision tree
+dec_tree_model <-
+  decision_tree(tree_depth = tune(), min_n = tune(), cost_complexity = tune()) %>%
+  set_engine('rpart') %>%
+  set_mode('regression')
 ```
 
 
@@ -231,7 +306,37 @@ ranger_deaths_rec <-
 # Confirmed
 ranger_confirmed_rec <- 
   basic_rec_confirmed
+
+# RF
+ranger_model <- 
+  rand_forest(mtry = tune(), min_n = tune(), trees = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("ranger") 
 ```
+
+## XGboost
+
+```{r}
+xgboost_deaths_rec <- 
+  basic_rec_deaths %>% 
+  step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>% 
+  step_zv(all_predictors()) 
+
+xgboost_confirmed_rec <- 
+  basic_rec_confirmed %>% 
+  step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>% 
+  step_zv(all_predictors()) 
+
+# Xgboost
+xgboost_model <- 
+  boost_tree(trees = tune(), min_n = tune(), tree_depth = tune(), learn_rate = tune(), 
+    loss_reduction = tune(), sample_size = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("xgboost") 
+```
+
 
 
 ## NN
@@ -242,16 +347,22 @@ mlp_deaths_rec <-
   basic_rec_deaths %>% 
   step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
   step_dummy(all_nominal(), -all_outcomes()) %>% 
-  step_zv(all_predictors()) %>% 
-  step_normalize(all_predictors(), -all_nominal())
+  step_normalize(all_predictors(), -all_nominal()) %>%
+  step_zv(all_predictors())
 
 # Confirmed
 mlp_confirmed_rec <-
   basic_rec_confirmed %>% 
   step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
-  step_dummy(all_nominal(), -all_outcomes()) %>% 
-  step_zv(all_predictors()) %>% 
-  step_normalize(all_predictors(), -all_nominal())
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_normalize(all_predictors(), -all_nominal()) %>%
+  step_zv(all_predictors()) 
+
+# NN
+mlp_model <-
+  mlp(hidden_units = tune(), penalty = tune(), epochs = tune()) %>%
+  set_engine('nnet') %>%
+  set_mode('regression')
 ```
 
 ```{r}
@@ -264,6 +375,7 @@ workflow_tune_deaths <- workflow_set(
     svm_rbf_deaths = svm_deaths_rec,
     dec_tree_deaths = dec_tree_deaths_rec,
     ranger_deaths = ranger_deaths_rec,
+    xgboost_deaths = xgboost_deaths_rec,
     mlp_deaths = mlp_deaths_rec
   ),
   
@@ -273,7 +385,8 @@ workflow_tune_deaths <- workflow_set(
     wf_3 = svm_rbf_model,
     wf_4 = dec_tree_model,
     wf_5 = ranger_model,
-    wf_6 = mlp_model
+    wf_6 = xgboost_model,
+    wf_7 = mlp_model
   ), 
   
   cross = F
@@ -288,6 +401,7 @@ workflow_tune_confirmed <- workflow_set(
     svm_rbf_confirmed = svm_confirmed_rec,
     dec_tree_confirmed = dec_tree_confirmed_rec,
     ranger_confirmed = ranger_confirmed_rec,
+    xgboost_confirmed = xgboost_confirmed_rec,
     mlp_confirmed = mlp_confirmed_rec
   ),
   
@@ -297,7 +411,8 @@ workflow_tune_confirmed <- workflow_set(
     wf_3 = svm_rbf_model,
     wf_4 = dec_tree_model,
     wf_5 = ranger_model,
-    wf_6 = mlp_model
+    wf_6 = xgboost_model,
+    wf_7 = mlp_model
   ), 
   
   cross = F
@@ -305,22 +420,17 @@ workflow_tune_confirmed <- workflow_set(
 ```
 
 
-### DEATHS
-```{r}
+
+## DEATHS
+```{r, eval=F}
 cl <- makePSOCKcluster(8)
 registerDoParallel(cl)
-
-grid_ctrl <-
-   control_grid(
-      save_pred = TRUE,
-      save_workflow = TRUE
-   )
 
 workflow_results_deaths <- workflow_tune_deaths %>%
   workflow_map(
     seed = 1503,
     resamples = spain_rolling_deaths,
-    grid = 50,
+    grid = 100,
     control = grid_ctrl,
     verbose = T
    )
@@ -336,42 +446,42 @@ autoplot(workflow_results_deaths, select_best = T) +
 ```
 
 ```{r}
-# workflow_results_deaths %>%
-#   pull_workflow_set_result("mlp_deaths_wf_6") %>%
-#   pull(.notes)
-# 
-# workflow_results_deaths %>%
-#   pull_workflow_set_result("mlp_deaths_wf_6") %>%
-#   collect_metrics() %>%
-#   filter(.metric == "rmse") %>%
-#   arrange(mean) %>%
-#   head(5)
-# 
-# workflow_results_deaths %>%
-#   pull_workflow_set_result("mlp_deaths_wf_6") %>%
-#   collect_metrics() %>%
-#   filter(.metric == "rsq") %>%
-#   arrange(desc(mean)) %>%
-#   head(5)
+workflow_results_deaths %>%
+  pull_workflow_set_result("mlp_deaths_wf_7") %>%
+  pull(.notes)
+
+workflow_results_deaths %>%
+  pull_workflow_set_result("xgboost_deaths_wf_6") %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  arrange(mean) %>%
+  head(5)
+
+workflow_results_deaths %>%
+  pull_workflow_set_result("mlp_deaths_wf_7") %>%
+  collect_metrics() %>%
+  filter(.metric == "rsq") %>%
+  arrange(desc(mean)) %>%
+  head(5)
 
 kknn_param <- kknn_model %>%
   parameters() %>%
-  update(neighbors = neighbors(c(3, 21)))
+  update(neighbors = neighbors(c(5, 21)))
 
 svm_poly_param <- svm_poly_model %>%
   parameters() %>%
-  update(cost = cost(c(-10, 3.5)),
+  update(cost = cost(c(-1, 4)),
          scale_factor = scale_factor(c(-10, -3)))
 
 svm_rbf_param <- svm_rbf_model %>%
   parameters() %>%
-  update(cost = cost(c(0,5)),
+  update(cost = cost(c(-1,5)),
          rbf_sigma = rbf_sigma(c(-10, -2)))
 
 dec_tree_param <- dec_tree_model %>%
   parameters() %>%
   update(cost_complexity = cost_complexity(c(-10, -5)),
-         tree_depth = tree_depth(c(1, 30)), 
+         tree_depth = tree_depth(c(2, 30)), 
          min_n = min_n(c(2, 36))) 
 
 ranger_param <- ranger_model %>%
@@ -380,11 +490,19 @@ ranger_param <- ranger_model %>%
          trees = trees(c(200, 2000)),
          min_n = min_n(c(2, 36)))
 
+xgboost_param <- xgboost_model %>%
+  parameters() %>%
+  update(trees = trees(c(10, 2000)),
+         min_n = min_n(c(3, 36)),
+         learn_rate = learn_rate(c(-10, -3)),
+         loss_reduction = loss_reduction(c(-10, -3)),
+         sample_size = sample_size(c(1, 1)))
+
 mlp_param <- mlp_model %>%
   parameters() %>%
-  update(hidden_units = hidden_units(c(2, 8)),
-         penalty = penalty(c(-10, -5)),
-         epochs = epochs(c(200, 1000)))
+  update(hidden_units = hidden_units(c(2, 10)),
+         penalty = penalty(c(-10, -2)),
+         epochs = epochs(c(300, 1000)))
 
 workflow_tune_deaths <- workflow_tune_deaths %>%
   option_add(param_info = kknn_param, 
@@ -397,19 +515,15 @@ workflow_tune_deaths <- workflow_tune_deaths %>%
              id = "dec_tree_deaths_wf_4") %>%
   option_add(param_info = ranger_param,
              id = "ranger_deaths_wf_5") %>%
+  option_add(param_info = xgboost_param,
+             id = "xgboost_deaths_wf_6") %>%
   option_add(param_info = mlp_param, 
-             id = "mlp_deaths_wf_6")
+             id = "mlp_deaths_wf_7")
 ```
 
-```{r}
+```{r, eval=F}
 cl <- makePSOCKcluster(8)
 registerDoParallel(cl)
-
-grid_ctrl <-
-   control_grid(
-      save_pred = TRUE,
-      save_workflow = TRUE
-   )
 
 workflow_results_deaths <- workflow_tune_deaths %>%
   workflow_map(
@@ -420,57 +534,53 @@ workflow_results_deaths <- workflow_tune_deaths %>%
     verbose = T
    )
 
-# i 1 of 6 tuning:     kknn_deaths_wf_1
-# v 1 of 6 tuning:     kknn_deaths_wf_1 (14.4s)
-# i 2 of 6 tuning:     svm_poly_deaths_wf_2
-# v 2 of 6 tuning:     svm_poly_deaths_wf_2 (1m 5.4s)
-# i 3 of 6 tuning:     svm_rbf_deaths_wf_3
-# v 3 of 6 tuning:     svm_rbf_deaths_wf_3 (1m 6.8s)
-# i 4 of 6 tuning:     dec_tree_deaths_wf_4
-# v 4 of 6 tuning:     dec_tree_deaths_wf_4 (1m 3.7s)
-# i 5 of 6 tuning:     ranger_deaths_wf_5
-# v 5 of 6 tuning:     ranger_deaths_wf_5 (1m 10.2s)
-# i 6 of 6 tuning:     mlp_deaths_wf_6
-# v 6 of 6 tuning:     mlp_deaths_wf_6 (1m 8s)
+# i 1 of 7 tuning:     kknn_deaths_wf_1
+# v 1 of 7 tuning:     kknn_deaths_wf_1 (55.8s)
+# i 2 of 7 tuning:     svm_poly_deaths_wf_2
+# v 2 of 7 tuning:     svm_poly_deaths_wf_2 (6m 35.7s)
+# i 3 of 7 tuning:     svm_rbf_deaths_wf_3
+# v 3 of 7 tuning:     svm_rbf_deaths_wf_3 (6m 27s)
+# i 4 of 7 tuning:     dec_tree_deaths_wf_4
+# v 4 of 7 tuning:     dec_tree_deaths_wf_4 (6m 15.8s)
+# i 5 of 7 tuning:     ranger_deaths_wf_5
+# v 5 of 7 tuning:     ranger_deaths_wf_5 (6m 36.8s)
+# i 6 of 7 tuning:     xgboost_deaths_wf_6
+# v 6 of 7 tuning:     xgboost_deaths_wf_6 (10m 32.2s)
+# i 7 of 7 tuning:     mlp_deaths_wf_7
+# v 7 of 7 tuning:     mlp_deaths_wf_7 (6m 43.1s)
 
 stopCluster(cl)
 
 # saveRDS(workflow_results_deaths, "../02_results/workflow_results_deaths.RDS")
-workflow_results_deaths <- readRDS("../02_results/workflow_results_deaths.RDS")
 ```
 
 ```{r}
+workflow_results_deaths <- readRDS("../02_results/workflow_results_deaths.RDS")
+
 autoplot(workflow_results_deaths, select_best = T) +
   ggtitle("Results for the deaths model") +
   scale_color_tq() +
   theme_tq()
 
-workflow_results_deaths %>%
-  pull_workflow_set_result("dec_tree_deaths_wf_4") %>%
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-  arrange(mean) %>%
-  head(5)
-
-workflow_results_deaths %>%
-  pull_workflow_set_result("dec_tree_deaths_wf_4") %>%
-  collect_metrics() %>%
-  filter(.metric == "rsq") %>%
-  arrange(desc(mean)) %>%
-  head(5)
+# workflow_results_deaths %>%
+#   pull_workflow_set_result("dec_tree_deaths_wf_4") %>%
+#   collect_metrics() %>%
+#   filter(.metric == "rmse") %>%
+#   arrange(mean) %>%
+#   head(5)
+# 
+# workflow_results_deaths %>%
+#   pull_workflow_set_result("dec_tree_deaths_wf_4") %>%
+#   collect_metrics() %>%
+#   filter(.metric == "rsq") %>%
+#   arrange(desc(mean)) %>%
+#   head(5)
 ```
 
-```{r}
-workflow_results_deaths %>%
-   pull_workflow_set_result("dec_tree_deaths_wf_4") %>%
-   pull(.notes)
-```
 
 ```{r}
 deaths_stack_data <- stacks() %>%
   add_candidates(workflow_results_deaths)
-
-as_tibble(deaths_stack_data)
 ```
 
 ```{r}
@@ -485,6 +595,23 @@ stopCluster(cl)
 ```
 
 ```{r}
+deaths_stack_model$data_stack %>%
+  rename(mlp_deaths_094 = mlp_deaths_wf_6_1_094, 
+         mlp_deaths_046 = mlp_deaths_wf_6_1_046, 
+         mlp_deaths_053 = mlp_deaths_wf_6_1_053, 
+         mlp_deaths_056 = mlp_deaths_wf_6_1_056,
+         mlp_deaths_093 = mlp_deaths_wf_6_1_093, 
+         svm_rbf_deaths_025 = svm_rbf_deaths_wf_3_1_025,
+         mlp_deaths_069 = mlp_deaths_wf_6_1_069, 
+         mlp_deaths_089 = mlp_deaths_wf_6_1_089, 
+         mlp_deaths_003 = mlp_deaths_wf_6_1_003,
+         mlp_deaths_073 = mlp_deaths_wf_6_1_073) %>%
+  dplyr::select(mlp_deaths_094, mlp_deaths_046, mlp_deaths_053, mlp_deaths_056,
+                mlp_deaths_093, svm_rbf_deaths_025, mlp_deaths_069, mlp_deaths_089,
+                mlp_deaths_003, mlp_deaths_073) %>% 
+  ggcorr(label = T, digits = 2, label_alpha = T, label_round = 2)
+
+
 autoplot(deaths_stack_model, type = "weights")
 ```
 
@@ -502,20 +629,19 @@ stopCluster(cl)
 
 ```{r}
 spain_deaths %>%
-bind_cols(predict(deaths_stack_model_fit, .)) %>%
-dplyr::select(deaths_week, .pred) %>%
-rmse(truth = deaths_week, estimate = .pred)
+  bind_cols(predict(deaths_stack_model_fit, .)) %>%
+  dplyr::select(deaths_week, .pred) %>%
+  rmse(truth = deaths_week, estimate = .pred)
 
 spain_deaths %>%
-bind_cols(predict(deaths_stack_model_fit, .)) %>%
-dplyr::select(deaths_week, .pred) %>%
-rsq(truth = deaths_week, estimate = .pred)
+  bind_cols(predict(deaths_stack_model_fit, .)) %>%
+  dplyr::select(deaths_week, .pred) %>%
+  rsq(truth = deaths_week, estimate = .pred)
 ```
 
 
 
-
-### CONFIRMED
+##CONFIRMED
 
 ```{r}
 grid_ctrl <- control_grid(save_pred = T, save_workflow = T)
@@ -549,6 +675,13 @@ ranger_model <-
   set_mode("regression") %>% 
   set_engine("ranger") 
 
+# Xgboost
+xgboost_model <- 
+  boost_tree(trees = tune(), min_n = tune(), tree_depth = tune(), learn_rate = tune(), 
+    loss_reduction = tune(), sample_size = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("xgboost")
+
 # NN
 mlp_model <-
   mlp(hidden_units = tune(), penalty = tune(), epochs = tune()) %>%
@@ -557,114 +690,14 @@ mlp_model <-
 ```
 
 
-```{r}
+```{r, eval=F}
 cl <- makePSOCKcluster(8)
 registerDoParallel(cl)
 
-grid_ctrl <-
-   control_grid(
-      save_pred = TRUE,
-      save_workflow = TRUE
-   )
-
-workflow_results_deaths <- workflow_tune_deaths %>%
+workflow_results_confirmed <- workflow_tune_confirmed %>%
   workflow_map(
     seed = 1503,
-    resamples = spain_rolling_deaths,
-    grid = 50,
-    control = grid_ctrl,
-    verbose = T
-   )
-
-stopCluster(cl)
-```
-
-```{r}
-autoplot(workflow_results_deaths, select_best = T) +
-  ggtitle("Results for the deaths model") +
-  scale_color_tq() +
-  theme_tq()
-```
-
-```{r}
-# workflow_results_deaths %>%
-#   pull_workflow_set_result("mlp_deaths_wf_6") %>%
-#   pull(.notes)
-# 
-# workflow_results_deaths %>%
-#   pull_workflow_set_result("mlp_deaths_wf_6") %>%
-#   collect_metrics() %>%
-#   filter(.metric == "rmse") %>%
-#   arrange(mean) %>%
-#   head(5)
-# 
-# workflow_results_deaths %>%
-#   pull_workflow_set_result("mlp_deaths_wf_6") %>%
-#   collect_metrics() %>%
-#   filter(.metric == "rsq") %>%
-#   arrange(desc(mean)) %>%
-#   head(5)
-
-kknn_param <- kknn_model %>%
-  parameters() %>%
-  update(neighbors = neighbors(c(3, 21)))
-
-svm_poly_param <- svm_poly_model %>%
-  parameters() %>%
-  update(cost = cost(c(-10, 3.5)),
-         scale_factor = scale_factor(c(-10, -3)))
-
-svm_rbf_param <- svm_rbf_model %>%
-  parameters() %>%
-  update(cost = cost(c(0,5)),
-         rbf_sigma = rbf_sigma(c(-10, -2)))
-
-dec_tree_param <- dec_tree_model %>%
-  parameters() %>%
-  update(tree_depth = tree_depth(), 
-         min_n = min_n(c(2, 36))) 
-
-ranger_param <- ranger_model %>%
-  parameters() %>%
-  update(mtry = mtry(c(2, 15)),
-         trees = trees(c(200, 2000)),
-         min_n = min_n(c(2, 36)))
-
-mlp_param <- mlp_model %>%
-  parameters() %>%
-  update(hidden_units = hidden_units(c(2, 8)),
-         penalty = penalty(c(-10, -5)),
-         epochs = epochs(c(200, 1000)))
-
-workflow_tune_deaths <- workflow_tune_deaths %>%
-  option_add(param_info = kknn_param, 
-             id = "kknn_deaths_wf_1") %>%
-  option_add(param_info = svm_poly_param, 
-             id = "svm_poly_deaths_wf_2") %>%
-  option_add(param_info = svm_rbf_param, 
-             id = "svm_rbf_deaths_wf_3") %>%
-  option_add(param_info = dec_tree_param,
-             id = "dec_tree_deaths_wf_4") %>%
-  option_add(param_info = ranger_param,
-             id = "ranger_deaths_wf_5") %>%
-  option_add(param_info = mlp_param, 
-             id = "mlp_deaths_wf_6")
-```
-
-```{r}
-cl <- makePSOCKcluster(8)
-registerDoParallel(cl)
-
-grid_ctrl <-
-   control_grid(
-      save_pred = TRUE,
-      save_workflow = TRUE
-   )
-
-workflow_results_deaths <- workflow_tune_deaths %>%
-  workflow_map(
-    seed = 1503,
-    resamples = spain_rolling_deaths,
+    resamples = spain_rolling_confirmed,
     grid = 100,
     control = grid_ctrl,
     verbose = T
@@ -673,10 +706,246 @@ workflow_results_deaths <- workflow_tune_deaths %>%
 stopCluster(cl)
 ```
 
+```{r}
+autoplot(workflow_results_confirmed, select_best = T) +
+  ggtitle("Results for the confirmed model") +
+  scale_color_tq() +
+  theme_tq()
+```
+
+```{r}
+workflow_results_confirmed %>%
+  pull_workflow_set_result("mlp_confirmed_wf_7") %>%
+  pull(.notes)
+
+workflow_results_confirmed %>%
+  pull_workflow_set_result("mlp_confirmed_wf_7") %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  arrange(mean) %>%
+  head(5)
+
+workflow_results_confirmed %>%
+  pull_workflow_set_result("mlp_confirmed_wf_7") %>%
+  collect_metrics() %>%
+  filter(.metric == "rsq") %>%
+  arrange(desc(mean)) %>%
+  head(5)
+
+kknn_param <- kknn_model %>%
+  parameters() %>%
+  update(neighbors = neighbors(c(5, 21)))
+
+svm_poly_param <- svm_poly_model %>%
+  parameters() %>%
+  update(cost = cost(c(-2, 5)),
+         scale_factor = scale_factor(c(-10, -3)))
+
+svm_rbf_param <- svm_rbf_model %>%
+  parameters() %>%
+  update(cost = cost(c(-2,5)),
+         rbf_sigma = rbf_sigma(c(-10, -2)))
+
+dec_tree_param <- dec_tree_model %>%
+  parameters() %>%
+  update(cost_complexity = cost_complexity(c(-10, -5)),
+         tree_depth = tree_depth(c(2, 30)), 
+         min_n = min_n(c(2, 36))) 
+
+ranger_param <- ranger_model %>%
+  parameters() %>%
+  update(mtry = mtry(c(2, 15)),
+         trees = trees(c(200, 2000)),
+         min_n = min_n(c(2, 36)))
+
+xgboost_param <- xgboost_model %>%
+  parameters() %>%
+  update(trees = trees(c(10, 2000)),
+         min_n = min_n(c(3, 36)),
+         learn_rate = learn_rate(c(-10, -2)),
+         loss_reduction = loss_reduction(c(-10, -3)),
+         sample_size = sample_size(c(1, 1)))
+
+mlp_param <- mlp_model %>%
+  parameters() %>%
+  update(hidden_units = hidden_units(c(2, 9)),
+         penalty = penalty(c(-10, -2)),
+         epochs = epochs(c(200, 1000)))
+
+workflow_tune_confirmed <- workflow_tune_confirmed %>%
+  option_add(param_info = kknn_param, 
+             id = "kknn_confirmed_wf_1") %>%
+  option_add(param_info = svm_poly_param, 
+             id = "svm_poly_confirmed_wf_2") %>%
+  option_add(param_info = svm_rbf_param, 
+             id = "svm_rbf_confirmed_wf_3") %>%
+  option_add(param_info = dec_tree_param,
+             id = "dec_tree_confirmed_wf_4") %>%
+  option_add(param_info = ranger_param,
+             id = "ranger_confirmed_wf_5") %>%
+  option_add(param_info = xgboost_param,
+             id = "xgboost_confirmed_wf_6") %>%
+  option_add(param_info = mlp_param, 
+             id = "mlp_confirmed_wf_7")
+```
+
+```{r}
+cl <- makePSOCKcluster(8)
+registerDoParallel(cl)
+
+workflow_results_confirmed <- workflow_tune_confirmed %>%
+  workflow_map(
+    seed = 1503,
+    resamples = spain_rolling_confirmed,
+    grid = 100,
+    control = grid_ctrl,
+    verbose = T
+   )
+
+
+stopCluster(cl)
+
+saveRDS(workflow_results_confirmed, "../02_results/workflow_results_confirmed.RDS")
+# workflow_results_confirmed <- readRDS("../02_results/workflow_results_confirmed.RDS")
+```
+
+```{r}
+autoplot(workflow_results_confirmed, select_best = T) +
+  ggtitle("Results for the confirmed model") +
+  scale_color_tq() +
+  theme_tq()
+
+workflow_results_confirmed %>%
+  pull_workflow_set_result("dec_tree_confirmed_wf_4") %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  arrange(mean) %>%
+  head(5)
+
+workflow_results_confirmed %>%
+  pull_workflow_set_result("dec_tree_confirmed_wf_4") %>%
+  collect_metrics() %>%
+  filter(.metric == "rsq") %>%
+  arrange(desc(mean)) %>%
+  head(5)
+```
+
+
+```{r}
+confirmed_stack_data <- stacks() %>%
+  add_candidates(workflow_results_confirmed)
+```
+
+```{r}
+cl <- makePSOCKcluster(8)
+registerDoParallel(cl)
+
+confirmed_stack_model <- 
+  confirmed_stack_data %>%
+  blend_predictions()
+
+stopCluster(cl)
+
+autoplot(confirmed_stack_model, type = "weights")
+```
+
+```{r}
+confirmed_stack_model$data_stack %>%
+  rename(mlp_deaths_094 = mlp_deaths_wf_6_1_094, 
+         mlp_deaths_046 = mlp_deaths_wf_6_1_046, 
+         mlp_deaths_053 = mlp_deaths_wf_6_1_053, 
+         mlp_deaths_056 = mlp_deaths_wf_6_1_056,
+         mlp_deaths_093 = mlp_deaths_wf_6_1_093, 
+         svm_rbf_deaths_025 = svm_rbf_deaths_wf_3_1_025,
+         mlp_deaths_069 = mlp_deaths_wf_6_1_069, 
+         mlp_deaths_089 = mlp_deaths_wf_6_1_089, 
+         mlp_deaths_003 = mlp_deaths_wf_6_1_003,
+         mlp_deaths_073 = mlp_deaths_wf_6_1_073) %>%
+  dplyr::select(mlp_deaths_094, mlp_deaths_046, mlp_deaths_053, mlp_deaths_056,
+                mlp_deaths_093, svm_rbf_deaths_025, mlp_deaths_069, mlp_deaths_089,
+                mlp_deaths_003, mlp_deaths_073) %>% 
+  ggcorr(label = T, digits = 2, label_alpha = T, label_round = 2)
+
+
+autoplot(confirmed_stack_model, type = "weights")
+```
+
+```{r}
+set.seed(123)
+cl <- makePSOCKcluster(8)
+registerDoParallel(cl)
+
+confirmed_stack_model_fit <-
+  confirmed_stack_data %>%
+  blend_predictions() %>%
+  fit_members()
+
+stopCluster(cl)
+```
+
+```{r}
+spain_confirmed %>%
+  bind_cols(predict(confirmed_stack_model_fit, .)) %>%
+  dplyr::select(confirmed_week, .pred) %>%
+  rmse(truth = confirmed_week, estimate = .pred)
+
+spain_confirmed %>%
+  bind_cols(predict(confirmed_stack_model_fit, .)) %>%
+  dplyr::select(confirmed_week, .pred) %>%
+  rsq(truth = confirmed_week, estimate = .pred)
+
+spain_new_data %>%
+  bind_cols(predict(confirmed_stack_model_fit, ., members = T)) %>% dplyr::select(confirmed_week, .pred)
+```
+
+
 
 
 
 # STACKING ENSEMBLE
+
+
+
+# PREDICTIONS
+
+```{r}
+pred_train_deaths <- deaths_stack_model_fit %>%
+  predict(new_data = spain)
+
+p1 <- spain %>%
+  mutate(predictions = pred_train_deaths$.pred) %>%
+  mutate(predictions = ifelse(predictions <0, 0, predictions)) %>% 
+  dplyr::select(date, deaths_week, predictions) %>%
+  pivot_longer(cols = c("deaths_week", "predictions"), values_to = "value", names_to = "Variable") %>%
+  ggplot(aes(x = date, y = value)) +
+  geom_line(aes(color = Variable), size = 1) +
+  scale_color_manual(values = c("darkred", "steelblue")) +
+  labs(
+    y = "Deaths per week",
+    x = "Date"
+  ) 
+
+pred_train_confirmed <- confirmed_stack_model_fit %>%
+  predict(new_data = spain)
+
+p2 <- spain %>%
+  mutate(predictions = pred_train_confirmed$.pred) %>%
+  mutate(predictions = ifelse(predictions < 0, 0, predictions)) %>% 
+  dplyr::select(date, confirmed_week, predictions) %>%
+  pivot_longer(cols = c("confirmed_week", "predictions"), values_to = "value", names_to = "Variable") %>%
+  ggplot(aes(x = date, y = value)) +
+  geom_line(aes(color = Variable), size = 1) +
+  scale_color_manual(values = c("darkred", "steelblue")) +
+  labs(
+    y = "Confirmed cases per week",
+    x = "Date"
+  ) 
+
+ggarrange(p1, p2) +
+  ggtitle("Results in the training set of both models") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20))
+```
+
 
 
 # REFERENCES
