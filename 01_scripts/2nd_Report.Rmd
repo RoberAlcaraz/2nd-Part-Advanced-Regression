@@ -98,7 +98,7 @@ that appear due to different human errors. For the numeric variables, we added a
 values, and for the categorical features, we took the mode, i.e., the most frequent
 value in every week. Below, we can observe how our main variables of interest look like:
 
-```{r}
+```{r, fig.cap="Weekly deaths and confirmed cases due to COVID-19 in Spain"}
 p1 <- spain %>%
   plot_time_series(.date_var = date, 
                    deaths_week, 
@@ -118,7 +118,8 @@ ggarrange(p1, p2) + ggtitle("COVID-19 in Spain")
 
 - Finally, we did some feature engineering, adding four new variables that took into 
 account the time (month and year), and past cases (deaths and confirmed cases 3 weeks).
-Therefore, the variables we finally considered for our model can be seen below:
+Therefore, the variables we finally considered for our model can be seen below. After all 
+these steps, we are in position to start with the machine learning process.
 
 | **Variable**                     | **Description**                                          |
 |:---------------------------------|----------------------------------------------------------|
@@ -135,13 +136,15 @@ Therefore, the variables we finally considered for our model can be seen below:
 | `workplace_closing`              | Indicates the measures of the workplace.                 |
 | `gatherings_restrictions`        | Indicates the measures of gatherings.                    |
 | `internal_movement_restrictions` | Indicates the measures of the movements between regions. |
+: Description of the variables
 
-
-
-After all these steps, we are in position to start with the machine learning process.
-
-
+\bigskip
 # MACHINE LEARNING
+
+In the following chapter, some well-known machine learning tools will be applied.
+We will explain the preprocessing steps that every algorithm needs, which are their main
+hyperparameters and how they work in order to tune their hyperparameters and draw
+comparison between the models.
 
 First of all, since we have new data, we have to repeat the recursive feature
 selection to select the most important features by means of a Random Forest. For the 
@@ -165,6 +168,8 @@ spain_deaths <- select_rec_deaths %>% prep() %>% juice()
 spain_deaths <- spain_deaths %>%
   mutate(date = spain$date)
 
+# saveRDS(spain_deaths, "../00_data/spain_deaths.RDS")
+
 # Predictive model for the confirmed cases
 select_rec_confirmed <- 
   recipe(confirmed_week ~ ., data = spain) %>%
@@ -175,6 +180,8 @@ select_rec_confirmed <-
 spain_confirmed <- select_rec_confirmed %>% prep() %>% juice()
 spain_confirmed <- spain_confirmed%>%
   mutate(date = spain$date)
+
+# saveRDS(spain_confirmed, "../00_data/spain_confirmed.RDS")
 ```
 
 
@@ -206,6 +213,7 @@ spain_rolling_confirmed <- rolling_origin(
   )
 ```
 
+
 ```{r}
 grid_ctrl <- control_grid(save_pred = T, save_workflow = T)
 
@@ -220,50 +228,91 @@ basic_rec_confirmed <-
 
 
 
-## KNN
+## K-Nearest Neighbors (K-NN)
+
+The nearest neighbors algorithm **(k-NN)** is a supervised machine learning model
+normally  used for both classification and regression. Firstly, it is important to
+define a distance between the observations, usually the euclidean is the most popular.
+Then, the distance between the observation to classify and all points in the sample are
+calculated. After that, we have to select a number for $k$, which will be the number of
+the $k$ closest observations from the point that we want to classify. Finally, the observation will be classified as the average of these others $k$ observations.
+
+Regarding the preprocessing steps, there are not too many assumptions, but there are
+some changes that are recommended. For instance, we will decorrelate predictors because
+it improves the prediction accuracy even though it is not mandatory. Also, we will 
+convert all categorical variables to dummy (note that most of the algorithms do it 
+without any specification), we will normalize all predictors and finally, if necessary, 
+we will remove those features with zero variance (those that only have one value).
+
+With respect to the hyperparameter tuning, we have to focus on two main parameters:
+neighbors (obviously), and the weight function (`weight_func`), which is the 
+type of kernel function that weights the distance between samples (*rectangular*, 
+*triangular*, *epanechnikov*, etc). Also, we will use the Euclidean distance to carry 
+out these steps.
+
 
 ```{r}
 # Deaths
 kknn_deaths_rec <- 
   basic_rec_deaths %>%
-  step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
   step_dummy(all_nominal(), -all_outcomes()) %>% 
   step_normalize(all_predictors(), -all_nominal()) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.9) %>% # decorrelate predictors
   step_zv(all_predictors()) 
 
 # Confirmed
 kknn_confirmed_rec <- 
-  basic_rec_confirmed %>% 
-  step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
+  basic_rec_confirmed %>%
   step_dummy(all_nominal(), -all_outcomes()) %>% 
   step_normalize(all_predictors(), -all_nominal()) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.9) %>% # decorrelate predictors
   step_zv(all_predictors()) 
 
 # KNN
 kknn_model <- 
   nearest_neighbor(neighbors = tune(), weight_func = tune()) %>% 
   set_mode("regression") %>% 
-  set_engine("kknn") 
+  set_engine("kknn")
 ```
 
 
-## SVR
+## Support Vector Regression (SVR)
+
+The support vector machine, or preferably, the support vector regression **(SVR)**
+is an algorithm used for both classification and regression. In regression it fits
+a function to create a tube with width $\varepsilon$, where the points inside that 
+tube will be used to predict the new points.
+
+For this algorithm, the preprocessing steps we need to do are the same that we did
+for the k-NN algorithm: decorrelate predictors, create dummy variables, normalize 
+the predictors and remove those with zero variance.
+
+We will consider two algorithms from this family: the *polynomial SVR* and the 
+*radial basis function SVR*. The difference between them is the kernel function used
+to map the original data set into a higher dimensional space. Therefore, for the 
+polynomial SVR we will have a parameter for the polynomial degree (`degree`) and another
+one for the scaling factor (`scale_factor`) for the kernel; and for the rbf SVR we will 
+have an hyperparameter $\sigma$ (`rbf_sigma`), which determines the reach of a single 
+training instance. Also, there are another two common hyperparameters for both 
+algorithms: the cost (`cost`) of predicting a  sample within or on the wrong side of the
+margin, and the $\varepsilon$ (`margin`) we have said before.
+
 
 ```{r}
 # Deaths
 svm_deaths_rec <-
-  basic_rec_deaths %>% 
-  step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
+  basic_rec_deaths %>%
   step_dummy(all_nominal(), -all_outcomes()) %>% 
   step_normalize(all_predictors(), -all_nominal()) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.9) %>% # decorrelate predictors
   step_zv(all_predictors()) 
 
 # Confirmed
 svm_confirmed_rec <-
-  basic_rec_confirmed %>% 
-  step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
+  basic_rec_confirmed %>%
   step_dummy(all_nominal(), -all_outcomes()) %>% 
   step_normalize(all_predictors(), -all_nominal()) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.9) %>% # decorrelate predictors
   step_zv(all_predictors()) 
 
 # SVM
@@ -279,7 +328,50 @@ svm_rbf_model <-
 ```
 
 
-## Regression Trees and Random Forest
+## Regression Trees, Random Forest and eXtreme Gradient Boosting
+
+A decision or regression tree **(RT)** is the result of asking an ordered sequences of
+questions finishing in a prediction for the observation. The starting point of the
+classification tree is called root node and consist of the entire training set in the
+top of the tree. A node is a subset of the set of variables and it can be a parent node,
+which is a node that splits into another two nodes if the condition is satisfied or not,
+and a terminal node, which is a node that does not split and is assigned a value. This
+algorithm has the advantage of interpretability or small bias, however, the variance
+tend to be very large. Therefore, to reduce that variance, we combine some decision
+trees, which leeds to Random Forest.
+
+The Random Forest **(RF)** algorithm is an ensemble of regression trees. Firstly, we
+start with $B$ boostrap samples drawn from the training set, which reduce variance, due
+to aggregation, and bias, if the trees are fully grown. For each sample, a decision tree
+is grown. Then, we predict every observation in each tree, and the final value for 
+the observation will be the average of the results of each tree.
+
+The third one, e**X**treme **G**radient **B**oosting or **XGBoost**, is a decision tree
+ensemble machine learning algorithm that, unlike random forest, uses a boosting 
+framework, i.e., instead of taking the average of multiple decision trees as the RF 
+does, the models are built sequentially by minimizing the errors from previous models
+while boosting the influence of high-performing models.
+
+The principal advantages of the first two models is that they are scale invariant, i.e.,
+it does not matter the scale of the features, so in these models we will not apply any 
+preprocessing steps for the variables. Another advantage is that it is robust to 
+irrelevant predictors, because if the variables is not very relevant, it is very 
+possible that they will not use it to split the data. In contrast, for the XGBoost 
+we should decorrelate predictors, create dummy variables and remove the zero variance
+variables.
+
+For the decision trees, we will have to tune three hyperparameters: a cost parameter
+for the complexity of the tree (`Cp`), the maximum depth for the tree (`tree_depth`)
+and the minimum number of observations in a node that are required for the node to
+be split further (`min_n`). Secondly, for the Random Forest we will need to
+tune the number of predictors that will be randomly sampled at each split when creating
+decision trees (`mtry`), the number of trees contained in the ensemble (`trees`) and
+again, `min_n`. Finally, for the XGBoost, we have the same hyperparameters than the
+RF, the `tree_depth` from the decision tree and two additional hyperparameters: a number
+for the rate at which the boosting algorithm adapts from iteration to iteration 
+(`learn_rate`), and the reduction in the loss function required to split further 
+(`loss_reduction`).
+
 
 ```{r}
 # Deaths
@@ -288,7 +380,8 @@ dec_tree_deaths_rec <-
 
 # Confirmed
 dec_tree_confirmed_rec <- 
-  basic_rec_confirmed
+  basic_rec_confirmed %>% 
+  step_corr(all_numeric_predictors(), threshold = 0.9)
 
 # Decision tree
 dec_tree_model <-
@@ -314,56 +407,87 @@ ranger_model <-
   set_engine("ranger") 
 ```
 
-## XGboost
-
 ```{r}
 xgboost_deaths_rec <- 
   basic_rec_deaths %>% 
-  step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
   step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>% 
+  step_corr(all_numeric_predictors(), threshold = 0.9) %>% # decorrelate predictors
   step_zv(all_predictors()) 
 
 xgboost_confirmed_rec <- 
   basic_rec_confirmed %>% 
-  step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
   step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>% 
+  step_corr(all_numeric_predictors(), threshold = 0.9) %>% # decorrelate predictors
   step_zv(all_predictors()) 
 
 # Xgboost
 xgboost_model <- 
   boost_tree(trees = tune(), min_n = tune(), tree_depth = tune(), learn_rate = tune(), 
-    loss_reduction = tune(), sample_size = tune()) %>% 
+    loss_reduction = tune(), sample_size = 1) %>% 
   set_mode("regression") %>% 
-  set_engine("xgboost") 
+  set_engine("xgboost")
 ```
 
+## Neural network
+
+A multi-layer perceptron is a multivariate statistical technique that maps the
+inputs variables nonlinearly with the output variable. Between the inputs and output
+there is also hidden variables arranged in layers. The hidden and output layers are
+called nodes, neurons or processing units. Therefore, to model our problem we will have 
+$n$ inputs nodes, $X_1, \dots, X_n$ which are the variables, one or more layers of hidden nodes and an output node $Y$.
+
+The preprocessing steps we need to follow are the same as in the majority of models:
+decorrelate predictors, create dummy variables, normalize the data and remove zero-variance
+features.
+
+Regarding the hyperparameters, we have to tune four: the number of hidden units 
+(`hidden_units`), a penalty for the amount of weight regularization to reduce overfitting
+(`penalty`), the number of training iterations (`epoch`) and the activation function, which
+could be linear, softmax, relu or elu (`activation`).
 
 
-## NN
 
 ```{r}
 # Deaths
 mlp_deaths_rec <-
   basic_rec_deaths %>% 
-  step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
   step_dummy(all_nominal(), -all_outcomes()) %>% 
   step_normalize(all_predictors(), -all_nominal()) %>%
-  step_zv(all_predictors())
+  step_corr(all_numeric_predictors(), threshold = 0.9) %>% # decorrelate predictors
+  step_zv(all_predictors()) 
 
 # Confirmed
 mlp_confirmed_rec <-
   basic_rec_confirmed %>% 
-  step_corr(all_numeric_predictors(), threshold = 0.65) %>% # decorrelate predictors
   step_dummy(all_nominal(), -all_outcomes()) %>%
   step_normalize(all_predictors(), -all_nominal()) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.9) %>% # decorrelate predictors
   step_zv(all_predictors()) 
 
 # NN
 mlp_model <-
-  mlp(hidden_units = tune(), penalty = tune(), epochs = tune()) %>%
+  mlp(hidden_units = tune(), penalty = tune(), epochs = tune(), activation = tune()) %>%
   set_engine('nnet') %>%
   set_mode('regression')
 ```
+
+## Model tuning and selection
+
+Now that we have already explained all the models with their characteristics, it is 
+time to tune their hyperparameters. To do that, since our data set is very small, 
+we are going to consider a grid by default of size 100, which added to the 25 folds we have
+to tune the parameters, results in fitting 2500 models for each algorithm. To compare and
+tune them, we will select the one with lowest root mean square error (RMSE) and we will 
+look also to the r-square (RSQ).
+
+After fitting the first models, we will look at the model results to see possible 
+errors and also, better parameter grids. We will give more appropiate values for 
+the set of parameters based on the results obtained and we will again consider another
+grid of size 100 around the grid we have specified. Therefore, we will obtain 25
+different metrics for each set of parameters, so we will select the one with the lowest
+average RMSE. These results can be seen below:
+
+
 
 ```{r}
 # Deaths
@@ -420,8 +544,6 @@ workflow_tune_confirmed <- workflow_set(
 ```
 
 
-
-## DEATHS
 ```{r, eval=F}
 cl <- makePSOCKcluster(8)
 registerDoParallel(cl)
@@ -438,35 +560,25 @@ workflow_results_deaths <- workflow_tune_deaths %>%
 stopCluster(cl)
 ```
 
-```{r}
-autoplot(workflow_results_deaths, select_best = T) +
-  ggtitle("Results for the deaths model") +
-  scale_color_tq() +
-  theme_tq()
-```
 
 ```{r}
-workflow_results_deaths %>%
-  pull_workflow_set_result("mlp_deaths_wf_7") %>%
-  pull(.notes)
-
-workflow_results_deaths %>%
-  pull_workflow_set_result("xgboost_deaths_wf_6") %>%
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-  arrange(mean) %>%
-  head(5)
-
-workflow_results_deaths %>%
-  pull_workflow_set_result("mlp_deaths_wf_7") %>%
-  collect_metrics() %>%
-  filter(.metric == "rsq") %>%
-  arrange(desc(mean)) %>%
-  head(5)
+# workflow_results_deaths %>%
+#   pull_workflow_set_result("mlp_deaths_wf_7") %>%
+#   collect_metrics() %>%
+#   filter(.metric == "rmse") %>%
+#   arrange(mean) %>%
+#   head(5)
+# 
+# workflow_results_deaths %>%
+#   pull_workflow_set_result("mlp_deaths_wf_7") %>%
+#   collect_metrics() %>%
+#   filter(.metric == "rsq") %>%
+#   arrange(desc(mean)) %>%
+#   head(5)
 
 kknn_param <- kknn_model %>%
   parameters() %>%
-  update(neighbors = neighbors(c(5, 21)))
+  update(neighbors = neighbors(c(5, 31)))
 
 svm_poly_param <- svm_poly_model %>%
   parameters() %>%
@@ -495,8 +607,7 @@ xgboost_param <- xgboost_model %>%
   update(trees = trees(c(10, 2000)),
          min_n = min_n(c(3, 36)),
          learn_rate = learn_rate(c(-10, -3)),
-         loss_reduction = loss_reduction(c(-10, -3)),
-         sample_size = sample_size(c(1, 1)))
+         loss_reduction = loss_reduction(c(-10, -3)))
 
 mlp_param <- mlp_model %>%
   parameters() %>%
@@ -534,116 +645,13 @@ workflow_results_deaths <- workflow_tune_deaths %>%
     verbose = T
    )
 
-# i 1 of 7 tuning:     kknn_deaths_wf_1
-# v 1 of 7 tuning:     kknn_deaths_wf_1 (55.8s)
-# i 2 of 7 tuning:     svm_poly_deaths_wf_2
-# v 2 of 7 tuning:     svm_poly_deaths_wf_2 (6m 35.7s)
-# i 3 of 7 tuning:     svm_rbf_deaths_wf_3
-# v 3 of 7 tuning:     svm_rbf_deaths_wf_3 (6m 27s)
-# i 4 of 7 tuning:     dec_tree_deaths_wf_4
-# v 4 of 7 tuning:     dec_tree_deaths_wf_4 (6m 15.8s)
-# i 5 of 7 tuning:     ranger_deaths_wf_5
-# v 5 of 7 tuning:     ranger_deaths_wf_5 (6m 36.8s)
-# i 6 of 7 tuning:     xgboost_deaths_wf_6
-# v 6 of 7 tuning:     xgboost_deaths_wf_6 (10m 32.2s)
-# i 7 of 7 tuning:     mlp_deaths_wf_7
-# v 7 of 7 tuning:     mlp_deaths_wf_7 (6m 43.1s)
-
 stopCluster(cl)
 
-# saveRDS(workflow_results_deaths, "../02_results/workflow_results_deaths.RDS")
+saveRDS(workflow_results_deaths, "../02_results/workflow_results_deaths.RDS")
 ```
 
 ```{r}
-workflow_results_deaths <- readRDS("../02_results/workflow_results_deaths.RDS")
-
-autoplot(workflow_results_deaths, select_best = T) +
-  ggtitle("Results for the deaths model") +
-  scale_color_tq() +
-  theme_tq()
-
-# workflow_results_deaths %>%
-#   pull_workflow_set_result("dec_tree_deaths_wf_4") %>%
-#   collect_metrics() %>%
-#   filter(.metric == "rmse") %>%
-#   arrange(mean) %>%
-#   head(5)
-# 
-# workflow_results_deaths %>%
-#   pull_workflow_set_result("dec_tree_deaths_wf_4") %>%
-#   collect_metrics() %>%
-#   filter(.metric == "rsq") %>%
-#   arrange(desc(mean)) %>%
-#   head(5)
-```
-
-
-```{r}
-deaths_stack_data <- stacks() %>%
-  add_candidates(workflow_results_deaths)
-```
-
-```{r}
-cl <- makePSOCKcluster(8)
-registerDoParallel(cl)
-
-deaths_stack_model <- 
-  deaths_stack_data %>%
-  blend_predictions()
-
-stopCluster(cl)
-```
-
-```{r}
-deaths_stack_model$data_stack %>%
-  rename(mlp_deaths_094 = mlp_deaths_wf_6_1_094, 
-         mlp_deaths_046 = mlp_deaths_wf_6_1_046, 
-         mlp_deaths_053 = mlp_deaths_wf_6_1_053, 
-         mlp_deaths_056 = mlp_deaths_wf_6_1_056,
-         mlp_deaths_093 = mlp_deaths_wf_6_1_093, 
-         svm_rbf_deaths_025 = svm_rbf_deaths_wf_3_1_025,
-         mlp_deaths_069 = mlp_deaths_wf_6_1_069, 
-         mlp_deaths_089 = mlp_deaths_wf_6_1_089, 
-         mlp_deaths_003 = mlp_deaths_wf_6_1_003,
-         mlp_deaths_073 = mlp_deaths_wf_6_1_073) %>%
-  dplyr::select(mlp_deaths_094, mlp_deaths_046, mlp_deaths_053, mlp_deaths_056,
-                mlp_deaths_093, svm_rbf_deaths_025, mlp_deaths_069, mlp_deaths_089,
-                mlp_deaths_003, mlp_deaths_073) %>% 
-  ggcorr(label = T, digits = 2, label_alpha = T, label_round = 2)
-
-
-autoplot(deaths_stack_model, type = "weights")
-```
-
-```{r}
-cl <- makePSOCKcluster(8)
-registerDoParallel(cl)
-
-deaths_stack_model_fit <-
-  deaths_stack_data %>%
-  blend_predictions() %>%
-  fit_members()
-
-stopCluster(cl)
-```
-
-```{r}
-spain_deaths %>%
-  bind_cols(predict(deaths_stack_model_fit, .)) %>%
-  dplyr::select(deaths_week, .pred) %>%
-  rmse(truth = deaths_week, estimate = .pred)
-
-spain_deaths %>%
-  bind_cols(predict(deaths_stack_model_fit, .)) %>%
-  dplyr::select(deaths_week, .pred) %>%
-  rsq(truth = deaths_week, estimate = .pred)
-```
-
-
-
-##CONFIRMED
-
-```{r}
+# Now, the confirmed cases:
 grid_ctrl <- control_grid(save_pred = T, save_workflow = T)
 
 # KNN
@@ -678,13 +686,13 @@ ranger_model <-
 # Xgboost
 xgboost_model <- 
   boost_tree(trees = tune(), min_n = tune(), tree_depth = tune(), learn_rate = tune(), 
-    loss_reduction = tune(), sample_size = tune()) %>% 
+    loss_reduction = tune(), sample_size = 1) %>% 
   set_mode("regression") %>% 
   set_engine("xgboost")
 
 # NN
 mlp_model <-
-  mlp(hidden_units = tune(), penalty = tune(), epochs = tune()) %>%
+  mlp(hidden_units = tune(), penalty = tune(), epochs = tune(), activation = tune()) %>%
   set_engine('nnet') %>%
   set_mode('regression')
 ```
@@ -707,34 +715,27 @@ stopCluster(cl)
 ```
 
 ```{r}
-autoplot(workflow_results_confirmed, select_best = T) +
-  ggtitle("Results for the confirmed model") +
-  scale_color_tq() +
-  theme_tq()
-```
-
-```{r}
-workflow_results_confirmed %>%
-  pull_workflow_set_result("mlp_confirmed_wf_7") %>%
-  pull(.notes)
-
-workflow_results_confirmed %>%
-  pull_workflow_set_result("mlp_confirmed_wf_7") %>%
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-  arrange(mean) %>%
-  head(5)
-
-workflow_results_confirmed %>%
-  pull_workflow_set_result("mlp_confirmed_wf_7") %>%
-  collect_metrics() %>%
-  filter(.metric == "rsq") %>%
-  arrange(desc(mean)) %>%
-  head(5)
+# workflow_results_confirmed %>%
+#   pull_workflow_set_result("dec_tree_confirmed_wf_4") %>%
+#   pull(.notes)
+# 
+# workflow_results_confirmed %>%
+#   pull_workflow_set_result("dec_tree_confirmed_wf_4") %>%
+#   collect_metrics() %>%
+#   filter(.metric == "rmse") %>%
+#   arrange(mean) %>%
+#   head(5)
+# 
+# workflow_results_confirmed %>%
+#   pull_workflow_set_result("mlp_confirmed_wf_7") %>%
+#   collect_metrics() %>%
+#   filter(.metric == "rsq") %>%
+#   arrange(desc(mean)) %>%
+#   head(5)
 
 kknn_param <- kknn_model %>%
   parameters() %>%
-  update(neighbors = neighbors(c(5, 21)))
+  update(neighbors = neighbors(c(5, 31)))
 
 svm_poly_param <- svm_poly_model %>%
   parameters() %>%
@@ -748,9 +749,9 @@ svm_rbf_param <- svm_rbf_model %>%
 
 dec_tree_param <- dec_tree_model %>%
   parameters() %>%
-  update(cost_complexity = cost_complexity(c(-10, -5)),
-         tree_depth = tree_depth(c(2, 30)), 
-         min_n = min_n(c(2, 36))) 
+  update(cost_complexity = cost_complexity(c(-10, -1)),
+         tree_depth = tree_depth(c(2, 20)), 
+         min_n = min_n(c(2, 30))) 
 
 ranger_param <- ranger_model %>%
   parameters() %>%
@@ -763,8 +764,7 @@ xgboost_param <- xgboost_model %>%
   update(trees = trees(c(10, 2000)),
          min_n = min_n(c(3, 36)),
          learn_rate = learn_rate(c(-10, -2)),
-         loss_reduction = loss_reduction(c(-10, -3)),
-         sample_size = sample_size(c(1, 1)))
+         loss_reduction = loss_reduction(c(-10, -3)))
 
 mlp_param <- mlp_model %>%
   parameters() %>%
@@ -789,7 +789,7 @@ workflow_tune_confirmed <- workflow_tune_confirmed %>%
              id = "mlp_confirmed_wf_7")
 ```
 
-```{r}
+```{r, eval=FALSE}
 cl <- makePSOCKcluster(8)
 registerDoParallel(cl)
 
@@ -810,105 +810,430 @@ saveRDS(workflow_results_confirmed, "../02_results/workflow_results_confirmed.RD
 ```
 
 ```{r}
-autoplot(workflow_results_confirmed, select_best = T) +
-  ggtitle("Results for the confirmed model") +
-  scale_color_tq() +
-  theme_tq()
-
-workflow_results_confirmed %>%
-  pull_workflow_set_result("dec_tree_confirmed_wf_4") %>%
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-  arrange(mean) %>%
-  head(5)
-
-workflow_results_confirmed %>%
-  pull_workflow_set_result("dec_tree_confirmed_wf_4") %>%
-  collect_metrics() %>%
-  filter(.metric == "rsq") %>%
-  arrange(desc(mean)) %>%
-  head(5)
+workflow_results_deaths <- readRDS("../02_results/workflow_results_deaths.RDS")
+workflow_results_confirmed <- readRDS("../02_results/workflow_results_confirmed.RDS")
 ```
 
+```{r, fig.cap="Confidence interval for the metrics of the best set of hyperparameters of each model for the deaths"}
+autoplot(workflow_results_deaths, select_best = T) +
+  ggtitle("Results for the deaths model") +
+  scale_color_tq() +
+  theme_tq()
+```
+
+In the graphic above, we can observe the metrics obtained from the best set of 
+parameters and their confidence interval. For the deaths model, the model that has
+outperformed the rest is the **radial basis function support vector machines**, 
+which has around 130 RMSE and almost 0.7 RSQ on average. The set of hyperparameters
+can be seen below:
+
+|  **Hyperparameters** |   `rbf_svm`    |
+|----------------------|:--------------:|
+|`cost`                |     18.2275    |
+|`rbf_sigma`           |     0.00155    |
+|`margin`              |     0.10298    |
+:Final set of parameters for the radial basis function SVM
+
+```{r}
+#workflow_results_deaths %>%
+#  pull_workflow_set_result("svm_rbf_deaths_wf_3") %>% 
+#  select_best()
+```
+
+
+
+On the other hand, as we can see below, we have the results for the confirmed cases model. In 
+this case, we can observe that the best model seem to be the decision tree, however, it does 
+not have any value for RSQ. It occurs when the model predicts a single value for all samples, 
+so it is not what we want. Therefore, we will select the second best in RMSE, which is also 
+the best in RSQ: the **XGBoost**.
+
+```{r, fig.cap="Confidence interval for the metrics of the best set of hyperparameters of each model for the confirmed cases"}
+autoplot(workflow_results_confirmed, select_best = T) +
+  ggtitle("Results for the confirmed cases model") +
+  scale_color_tq() +
+  theme_tq()
+```
+
+
+Its best set of hyperparameters is:
+
+|  **Hyperparameters** |   `xgboost`    |
+|----------------------|:--------------:|
+|`trees`               |     $1279$     |
+|`min_n`               |     $9$        |
+|`tree_depth`          |     $6$        |
+|`learn_rate`          |     $0.0008$   |
+|`loss_reduction`      |     $2.11e-09$ |
+:Final set of parameters for the XGBoost
+
+```{r}
+# Deaths
+best_results_deaths <- 
+   workflow_results_deaths %>% 
+   pull_workflow_set_result("svm_rbf_deaths_wf_3") %>% 
+   select_best(metric = "rmse")
+
+best_workflow_deaths <- 
+   workflow_results_deaths %>% 
+   pull_workflow("svm_rbf_deaths_wf_3") %>% 
+   finalize_workflow(best_results_deaths)
+
+# Confirmed
+best_results_confirmed <- 
+   workflow_results_confirmed %>% 
+   pull_workflow_set_result("xgboost_confirmed_wf_6") %>% 
+   select_best(metric = "rmse")
+
+best_workflow_confirmed <- 
+   workflow_results_confirmed %>% 
+   pull_workflow("xgboost_confirmed_wf_6") %>% 
+   finalize_workflow(best_results_confirmed)
+
+best_fit_deaths <- best_workflow_deaths %>%
+  fit(spain)
+
+best_fit_confirmed <- best_workflow_confirmed %>%
+  fit(spain)
+
+# saveRDS(best_fit_deaths, "../02_results/best_fit_deaths.RDS")
+# saveRDS(best_fit_confirmed, "../02_results/best_fit_confirmed.RDS")
+```
+
+
+In the following section, in order to improve our models, we are going to make an 
+stacking ensemble with the best set of models we have fitted before.
+
+```{r}
+# workflow_results_deaths %>%
+#   pull_workflow_set_result("dec_tree_deaths_wf_4") %>%
+#   collect_metrics() %>%
+#   filter(.metric == "rmse") %>%
+#   arrange(mean) %>%
+#   head(5)
+# 
+# workflow_results_deaths %>%
+#   pull_workflow_set_result("dec_tree_deaths_wf_4") %>%
+#   collect_metrics() %>%
+#   filter(.metric == "rsq") %>%
+#   arrange(desc(mean)) %>%
+#   head(5)
+```
+
+\bigskip
+# STACKING ENSEMBLE
+
+In this section, we are going to combine those models we have created in order to
+make another one with better predictive power. All this process can be done thanks
+to the R package `stacks` from `tidymodels`, which have the necessary tools to carry
+it out. 
+
+Basically, we start by creating a data set with the outcome in the validation set (in
+our case, every 3 weeks validation sets) and all the predictions from each candidate
+member. Once we have our data set ready, we will apply a model to select the best set 
+of candidates. This process is usually called *metalearning*.
+
+Then, since the outputs of each member can be highly correlated, we should consider
+a model that skips some of the methods. Therefore, the models that are used in these
+steps are the ones we used in the previous project: ridge regression, lasso or elastic
+net, depending on the degree of regularization we want. After fitting one of these
+models, we get a coefficient for each member, which is called *weight*, that determines
+which models will be taken as final members of the ensemble. After we have the weights 
+for every member of the ensemble, we can fit the model in all the data set and predict
+on new data. 
+
+For our deaths model, we add all candidate members to the stack object, having finally
+619 candidate members from the 7 model definitions. We do not have the 700 candidates
+(one for each set of hyperparameters for each model) because some models configurations
+of the k-NN and decision tree had errors. After that, we fitted a elastic net model,
+and below we can see their results:
+
+```{r}
+deaths_stack_data <- stacks() %>%
+  add_candidates(workflow_results_deaths)
+```
+
+```{r, eval=FALSE}
+set.seed(123)
+cl <- makePSOCKcluster(8)
+registerDoParallel(cl)
+
+deaths_stack_model <- 
+  deaths_stack_data %>%
+  blend_predictions(
+    penalty = 10^(-6:-1),
+    mixture = seq(0, 1, 0.1),
+    metric = metric_set(rmse, rsq)
+    )
+
+deaths_stack_model_fit <-
+  deaths_stack_data %>%
+  blend_predictions(
+    penalty = 10^(-6:-1),
+    mixture = seq(0, 1, 0.1),
+    metric = metric_set(rmse, rsq)) %>%
+  fit_members()
+
+stopCluster(cl)
+
+saveRDS(deaths_stack_model, "../02_results/deaths_stack_model.RDS")
+saveRDS(deaths_stack_model_fit, "../02_results/deaths_stack_model_fit.RDS")
+```
+
+```{r}
+deaths_stack_model <- readRDS("../02_results/deaths_stack_model.RDS")
+deaths_stack_model_fit <- readRDS("../02_results/deaths_stack_model_fit.RDS")
+```
+
+\bigskip
+```{r, echo=T, eval=F}
+-- A stacked ensemble model -------------------------------------
+
+Out of 619 possible candidate members, the ensemble retained 10.
+Penalty: 0.1.
+Mixture: 1.
+
+The 10 highest weighted members are:
+# A tibble: 10 x 3
+   member                    type             weight
+   <chr>                     <chr>             <dbl>
+ 1 xgboost_deaths_wf_6_1_046 boost_tree 187867.     
+ 2 svm_rbf_deaths_wf_3_1_025 svm_rbf         0.492  
+ 3 mlp_deaths_wf_7_1_050     mlp             0.206  
+ 4 mlp_deaths_wf_7_1_056     mlp             0.155  
+ 5 mlp_deaths_wf_7_1_033     mlp             0.141  
+ 6 mlp_deaths_wf_7_1_040     mlp             0.132  
+ 7 mlp_deaths_wf_7_1_004     mlp             0.0824 
+ 8 mlp_deaths_wf_7_1_045     mlp             0.0806 
+ 9 mlp_deaths_wf_7_1_048     mlp             0.0184 
+10 mlp_deaths_wf_7_1_075     mlp             0.00210
+```
+\bigskip
+
+It finally select ten models: XGBoost, rfb SVM and 8 multilayer perceptrons. As we can 
+observe, for the first model, it gives a very large weight. Below we can see why: it predicts very small numbers, so it needs a larger weight.
+
+```{r}
+t <- workflow_results_deaths %>%
+  pull_workflow_set_result("xgboost_deaths_wf_6") %>%
+  collect_predictions() %>% 
+  filter(.config == "Preprocessor1_Model046") %>% 
+  dplyr::select(.pred, deaths_week) %>% 
+  head(5)
+
+knitr::kable(t, caption = "Predictions from the XGBoost model")
+```
+
+Also, we need to ensure that the predictions are not very correlated. To do that, we can
+observe a correlation plot between the ten selected members. There are a couple of
+them that have a high correlation (>0.8) but the majority are fine.
+
+```{r, fig.cap="Correlation plot between the selected members"}
+deaths_stack_model_fit$data_stack %>%
+  rename(xgboost_deaths_046 = xgboost_deaths_wf_6_1_046, 
+         svm_rbf_deaths_025 = svm_rbf_deaths_wf_3_1_025, 
+         mlp_deaths_050 = mlp_deaths_wf_7_1_050, 
+         mlp_deaths_056 = mlp_deaths_wf_7_1_056,
+         mlp_deaths_033 = mlp_deaths_wf_7_1_033, 
+         mlp_deaths_040 = mlp_deaths_wf_7_1_040,
+         mlp_deaths_004 = mlp_deaths_wf_7_1_004, 
+         mlp_deaths_045 = mlp_deaths_wf_7_1_045, 
+         mlp_deaths_048 = mlp_deaths_wf_7_1_048,
+         mlp_deaths_075 = mlp_deaths_wf_7_1_075) %>%
+  dplyr::select(xgboost_deaths_046, svm_rbf_deaths_025, mlp_deaths_050, mlp_deaths_056,
+                mlp_deaths_033, mlp_deaths_040, mlp_deaths_004, mlp_deaths_045,
+                mlp_deaths_048, mlp_deaths_075) %>% 
+  ggcorr(label = T, digits = 2, label_alpha = T, label_round = 2)
+```
+
+
+```{r}
+# spain_deaths %>%
+#   bind_cols(predict(deaths_stack_model_fit, .)) %>%
+#   dplyr::select(deaths_week, .pred) %>%
+#   rmse(truth = deaths_week, estimate = .pred)
+# 
+# spain_deaths %>%
+#   bind_cols(predict(deaths_stack_model_fit, .)) %>%
+#   dplyr::select(deaths_week, .pred) %>%
+#   rsq(truth = deaths_week, estimate = .pred)
+# 
+# spain_new_data %>%
+#   bind_cols(predict(deaths_stack_model_fit, .)) %>%
+#   dplyr::select(deaths_week, .pred) %>%
+#   rsq(truth = deaths_week, estimate = .pred)
+```
+
+On the other hand, let's see the ensemble model for the confirmed cases. Below, 
+we can observe that it only chooses 4: a rbf SVM, a multilayer perceptron and 
+two decision trees, giving the largest weight to the SVM model. Also, as we can 
+observe in the correlation plot, the two decision tree models are very correlated
+but since the rest are not, and the weights are very low, it is not a big problem.
 
 ```{r}
 confirmed_stack_data <- stacks() %>%
   add_candidates(workflow_results_confirmed)
 ```
 
-```{r}
+```{r, eval=FALSE}
+set.seed(123)
 cl <- makePSOCKcluster(8)
 registerDoParallel(cl)
 
 confirmed_stack_model <- 
   confirmed_stack_data %>%
-  blend_predictions()
-
-stopCluster(cl)
-
-autoplot(confirmed_stack_model, type = "weights")
-```
-
-```{r}
-confirmed_stack_model$data_stack %>%
-  rename(mlp_deaths_094 = mlp_deaths_wf_6_1_094, 
-         mlp_deaths_046 = mlp_deaths_wf_6_1_046, 
-         mlp_deaths_053 = mlp_deaths_wf_6_1_053, 
-         mlp_deaths_056 = mlp_deaths_wf_6_1_056,
-         mlp_deaths_093 = mlp_deaths_wf_6_1_093, 
-         svm_rbf_deaths_025 = svm_rbf_deaths_wf_3_1_025,
-         mlp_deaths_069 = mlp_deaths_wf_6_1_069, 
-         mlp_deaths_089 = mlp_deaths_wf_6_1_089, 
-         mlp_deaths_003 = mlp_deaths_wf_6_1_003,
-         mlp_deaths_073 = mlp_deaths_wf_6_1_073) %>%
-  dplyr::select(mlp_deaths_094, mlp_deaths_046, mlp_deaths_053, mlp_deaths_056,
-                mlp_deaths_093, svm_rbf_deaths_025, mlp_deaths_069, mlp_deaths_089,
-                mlp_deaths_003, mlp_deaths_073) %>% 
-  ggcorr(label = T, digits = 2, label_alpha = T, label_round = 2)
-
-
-autoplot(confirmed_stack_model, type = "weights")
-```
-
-```{r}
-set.seed(123)
-cl <- makePSOCKcluster(8)
-registerDoParallel(cl)
+  blend_predictions(
+    penalty = 10^(-6:-1),
+    mixture = seq(0, 1, 0.1),
+    metric = metric_set(rmse, rsq))
 
 confirmed_stack_model_fit <-
   confirmed_stack_data %>%
-  blend_predictions() %>%
+  blend_predictions(
+    penalty = 10^(-6:-1),
+    mixture = seq(0, 1, 0.1),
+    metric = metric_set(rmse, rsq)) %>%
   fit_members()
 
 stopCluster(cl)
-```
-
-```{r}
-spain_confirmed %>%
-  bind_cols(predict(confirmed_stack_model_fit, .)) %>%
-  dplyr::select(confirmed_week, .pred) %>%
-  rmse(truth = confirmed_week, estimate = .pred)
-
-spain_confirmed %>%
-  bind_cols(predict(confirmed_stack_model_fit, .)) %>%
-  dplyr::select(confirmed_week, .pred) %>%
-  rsq(truth = confirmed_week, estimate = .pred)
-
-spain_new_data %>%
-  bind_cols(predict(confirmed_stack_model_fit, ., members = T)) %>% dplyr::select(confirmed_week, .pred)
+saveRDS(confirmed_stack_model, "../02_results/confirmed_stack_model.RDS")
+saveRDS(confirmed_stack_model_fit, "../02_results/confirmed_stack_model_fit.RDS")
 ```
 
 
+```{r}
+confirmed_stack_model <- readRDS("../02_results/confirmed_stack_model.RDS")
+confirmed_stack_model_fit <- readRDS("../02_results/confirmed_stack_model_fit.RDS")
+```
 
 
+```{r, fig.cap="Weights for the selected members and correlation plot between them"}
+p1 <- autoplot(confirmed_stack_model, type = "weights")
+p2 <- confirmed_stack_model_fit$data_stack %>%
+  rename(svm_rbf_025 = svm_rbf_confirmed_wf_3_1_025, 
+         mlp_015 = mlp_confirmed_wf_7_1_015, 
+         dec_tree_058 = dec_tree_confirmed_wf_4_1_058, 
+         dec_tree_002 = dec_tree_confirmed_wf_4_1_002
+         ) %>%
+  dplyr::select(svm_rbf_025, mlp_015, dec_tree_058, dec_tree_002) %>% 
+  ggcorr(label = T, digits = 2, label_alpha = T, label_round = 2) +
+  ggtitle("Correlation plot")
 
-# STACKING ENSEMBLE
 
+ggarrange(p1, p2)
+```
 
+Once we have all these models fitted and selected, we are going how they predict
+in the training and testing sets, and we will give our conclusions.
 
-# PREDICTIONS
 
 ```{r}
+# spain_confirmed %>%
+#   bind_cols(predict(confirmed_stack_model_fit, ., members = T)) %>%
+#   dplyr::select(confirmed_week, .pred) %>%
+#   rmse(truth = confirmed_week, estimate = .pred)
+# 
+# spain_confirmed %>%
+#   bind_cols(predict(confirmed_stack_model_fit, .)) %>%
+#   dplyr::select(confirmed_week, .pred) %>%
+#   rsq(truth = confirmed_week, estimate = .pred)
+# 
+# spain_new_data %>%
+#   bind_cols(predict(confirmed_stack_model_fit, ., members = T)) %>% # dplyr::select(confirmed_week, .pred)
+```
+
+
+\bigskip
+# PREDICTIONS AND CONCLUSIONS
+
+As we saw above, the best model for the deaths was the radial basis function SVM,
+and for the confirmed cases, the XGBoost model. First of all, we are going to see
+both model predictions in the training and testing sets and then, we will see
+the behavior of the ensemble models.
+
+\bigskip
+```{r, fig.cap="Predictions in the training set from the radial basis function SVM (deaths) and XGBoost (confirmed)"}
+pred_train_deaths <- best_fit_deaths %>%
+  predict(new_data = spain)
+
+p1 <- spain %>%
+  mutate(predictions = pred_train_deaths$.pred) %>%
+  mutate(predictions = ifelse(predictions <0, 0, predictions)) %>% 
+  dplyr::select(date, deaths_week, predictions) %>%
+  pivot_longer(cols = c("deaths_week", "predictions"), values_to = "value", names_to = "Variable") %>%
+  ggplot(aes(x = date, y = value)) +
+  geom_line(aes(color = Variable), size = 1) +
+  scale_color_manual(values = c("darkred", "steelblue")) +
+  labs(
+    y = "Deaths per week",
+    x = "Date"
+  ) 
+
+pred_train_confirmed <- best_fit_confirmed %>%
+  predict(new_data = spain)
+
+p2 <- spain %>%
+  mutate(predictions = pred_train_confirmed$.pred) %>%
+  mutate(predictions = ifelse(predictions < 0, 0, predictions)) %>% 
+  dplyr::select(date, confirmed_week, predictions) %>%
+  pivot_longer(cols = c("confirmed_week", "predictions"), values_to = "value", names_to = "Variable") %>%
+  ggplot(aes(x = date, y = value)) +
+  geom_line(aes(color = Variable), size = 1) +
+  scale_color_manual(values = c("darkred", "steelblue")) +
+  labs(
+    y = "Confirmed cases per week",
+    x = "Date"
+  ) 
+
+ggarrange(p1, p2) +
+  ggtitle("Results in the training set of both models") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20))
+```
+
+\bigskip
+As we can observe, both models work in a good way but they are missing some peaks.
+For the deaths model, it does not get the peaks in April 2020 and either in April 2021.
+In the confirmed cases model it happens practically the same, in January 2021 it
+predicts a much lower value than it was. Now, let's see the predictions in the testing
+set:
+
+\bigskip
+```{r}
+pred_test_deaths <- best_fit_deaths %>%
+  predict(new_data = spain_new_data)
+
+pred_test_confirmed <- best_fit_confirmed %>%
+  predict(new_data = spain_new_data)
+
+results1 <- spain_new_data %>%
+  mutate(
+    predicted_deaths = pred_test_deaths$.pred,
+    predicted_confirmed = pred_test_confirmed$.pred
+  ) %>%
+  dplyr::select(date, deaths_week, predicted_deaths, confirmed_week, predicted_confirmed) %>%
+  summarise(
+    Date = date,
+    Deaths = deaths_week, 
+    `Pred. Deaths` = round(predicted_deaths, digits = 0),
+    `Dif. Deaths` = Deaths - `Pred. Deaths`,
+    Confirmed = confirmed_week, 
+    `Pred. Confirmed` = round(predicted_confirmed, digits = 0),
+    `Dif. Confirmed` = Confirmed - `Pred. Confirmed`
+  )
+
+knitr::kable(results1, caption = "Results in the testing set")
+# saveRDS(results1, "../02_results/results1.RDS")
+```
+
+The results in the testing sets are ver good. For the deaths model, the difference 
+in the first week is very large but for the next two, the differences are very similar.
+Moreover, for the confirmed model, the second week is almost perfectly predicted,
+and the other differences are not very large, which is very good. Now, let's see
+the results for the ensemble models:
+
+
+
+```{r, fig.cap="Results in the training set for the ensemble models"}
 pred_train_deaths <- deaths_stack_model_fit %>%
   predict(new_data = spain)
 
@@ -942,13 +1267,68 @@ p2 <- spain %>%
   ) 
 
 ggarrange(p1, p2) +
-  ggtitle("Results in the training set of both models") +
+  ggtitle("Results in the training set of both ensemble models") +
   theme(plot.title = element_text(hjust = 0.5, size = 20))
 ```
 
+Now, it can be seen that the predictions fits way better to the real values, reaching 
+the peaks that, with the previous models, we were not able to get. Let's see the results
+in the testing set.
 
+```{r}
+pred_test_deaths <- deaths_stack_model_fit %>%
+  predict(new_data = spain_new_data)
 
+pred_test_confirmed <- confirmed_stack_model_fit %>%
+  predict(new_data = spain_new_data)
+
+results2 <- spain_new_data %>%
+  mutate(
+    predicted_deaths = ifelse(pred_test_deaths$.pred < 0, 0, pred_test_deaths$.pred),
+    predicted_confirmed = ifelse(pred_test_confirmed$.pred < 0, 0, pred_test_confirmed$.pred)
+  ) %>%
+  dplyr::select(date, deaths_week, predicted_deaths, confirmed_week, predicted_confirmed) %>%
+  summarise(
+    Date = date,
+    Deaths = deaths_week, 
+    `Pred. Deaths` = round(predicted_deaths, digits = 0),
+    `Dif. Deaths` = Deaths - `Pred. Deaths`,
+    Confirmed = confirmed_week, 
+    `Pred. Confirmed` = round(predicted_confirmed, digits = 0),
+    `Dif. Confirmed` = Confirmed - `Pred. Confirmed`
+  )
+
+knitr::kable(results2, caption = "Results in the testing set for the ensemble model")
+# saveRDS(results2, "../02_results/results2.RDS")
+```
+
+Now, the results are much worse, and it may happen due to overfitting. Due to the 
+small quantity of data we have, an ensemble does not seem to be the best option.
+It learns in a very optimal way the training set but it has huge errors in the 
+testing set, so at the end, it is not an useful model to predict.
+
+As a conclusion, we have to admit that the results are very good taking into account
+the size of the data set, which only has 63 weeks and the quickness that the situation
+is changing. For instance, everybody knows that thanks to the vaccination process
+to old people, deaths will decrease drastically and also since the people are getting
+used to this pandemic time, the confirmed cases also goes down. However, those variables
+are not in our data set and could improve much more the predictions, but again, 
+with only 63 weeks it is very difficult to get prefect predictions. 
+
+\newpage
 # REFERENCES
 
+- Wickham et al., (2019). Welcome to the tidyverse. Journal of Open Source
+  Software, 4(43), 1686, https://doi.org/10.21105/joss.01686
+  
+- Kuhn et al., (2020). Tidymodels: a collection of packages for modeling and
+  machine learning using tidyverse principles. https://www.tidymodels.org
 
+- Guidotti, E., Ardia, D., (2020), "COVID-19 Data Hub", Journal of Open Source Software 5(51):2376.
+
+- Steven Pawley (2021). recipeselectors: Extra Recipes Steps for
+  Supervised Feature Selection. R package version 0.0.1.
+  https://github.com/stevenpawley/recipeselectors
+
+- Kuhn, Max, and Kjell Johnson. 2019. “Feature Selection Overview.” In, 227–40. Chapman; Hall/CRC.
 
